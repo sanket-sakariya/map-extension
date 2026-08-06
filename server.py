@@ -61,11 +61,26 @@ def collect_listing_urls(driver, query):
     encoded_query = urllib.parse.quote_plus(query)
     url = f"https://www.google.com/maps/search/{encoded_query}/"
     driver.get(url)
+    time.sleep(3)
 
-    WebDriverWait(driver, 20).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "a.hfpxzc"))
-    )
-    time.sleep(2)
+    # Check if we landed on a single place (no list) or a list of results
+    try:
+        WebDriverWait(driver, 10).until(
+            lambda d: d.find_elements(By.CSS_SELECTOR, "a.hfpxzc") or
+                      d.find_elements(By.CSS_SELECTOR, "h1.DUwDvf")
+        )
+    except:
+        return []
+
+    # If single place result (h1 present but no feed links), return current URL
+    single_place = driver.find_elements(By.CSS_SELECTOR, "h1.DUwDvf")
+    feed_links = driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+
+    if single_place and not feed_links:
+        return [driver.current_url]
+
+    if not feed_links:
+        return []
 
     # Scroll to load all listings
     scroll_script = """
@@ -198,18 +213,31 @@ def scrape():
         for i, listing_url in enumerate(listing_urls):
             try:
                 driver.get(listing_url)
-                # Wait for detail panel name to appear
-                WebDriverWait(driver, 8).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1.DUwDvf"))
-                )
-                time.sleep(0.5)  # brief settle
+                # Wait for detail panel — try multiple selectors
+                try:
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "h1.DUwDvf"))
+                    )
+                except:
+                    # Maybe consent dialog or slow load, try clicking through
+                    try:
+                        consent = driver.find_element(By.CSS_SELECTOR, "button[aria-label*='Accept']")
+                        consent.click()
+                        time.sleep(2)
+                        WebDriverWait(driver, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, "h1.DUwDvf"))
+                        )
+                    except:
+                        continue  # skip this listing
+
+                time.sleep(0.5)
 
                 detail = extract_listing_detail(driver)
                 if detail and detail.get("name"):
                     detail["_index"] = i + 1
                     results.append(detail)
             except Exception:
-                continue  # skip failed listings
+                continue
 
         return jsonify({
             "status": "success",
