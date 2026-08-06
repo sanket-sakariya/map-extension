@@ -1,6 +1,7 @@
 """
 Orchestrator worker — background thread.
-Uses round-robin to distribute queries across available workflow scrapers.
+Assigns queries to ALL available scrapers in parallel (round-robin).
+Polls active jobs for completion.
 """
 import json
 import time
@@ -11,7 +12,7 @@ from config import REDIS_URL
 
 _running = False
 _thread = None
-_rr_index = 0  # round-robin counter
+_rr_index = 0
 
 
 def get_redis():
@@ -33,7 +34,6 @@ def stop():
 
 
 def _get_scrapers(r) -> list[dict]:
-    """Get ordered list of scrapers from Redis set."""
     raw = r.smembers("active_scrapers")
     scrapers = []
     for item in raw:
@@ -41,31 +41,18 @@ def _get_scrapers(r) -> list[dict]:
             scrapers.append(json.loads(item))
         except:
             pass
-    # Sort by run_id for stable ordering
     scrapers.sort(key=lambda s: s.get("run_id", 0))
     return scrapers
 
 
-def _pick_scraper_round_robin(scrapers: list[dict], r) -> dict | None:
-    """Round-robin selection, skipping busy scrapers."""
-    global _rr_index
-    if not scrapers:
-        return None
-
-    n = len(scrapers)
-    for _ in range(n):
-        idx = _rr_index % n
-        _rr_index += 1
-        candidate = scrapers[idx]
-        tunnel_url = candidate.get("tunnel_url")
-        if not tunnel_url:
-            continue
-        # Skip if busy
-        if r.exists(f"scraper_busy:{tunnel_url}"):
-            continue
-        return candidate
-
-    return None  # all busy
+def _get_free_scrapers(scrapers: list[dict], r) -> list[dict]:
+    """Return all scrapers that are NOT currently busy."""
+    free = []
+    for s in scrapers:
+        tunnel_url = s.get("tunnel_url")
+        if tunnel_url and not r.exists(f"scraper_busy:{tunnel_url}"):
+            free.append(s)
+    return free
 
 
 def _loop(pat_getter):
@@ -77,55 +64,67 @@ def _loop(pat_getter):
             # Poll active jobs first
             _poll_active_jobs(r)
 
-            # Check query queue
-            query = r.lpop("query_queue")
-            if not query:
+            # Get queue length
+            queue_len = r.llen("query_queue")
+            if not queue_len:
+                time.sleep(2)
+                continue
+
+            # Get all free scrapers
+            scrapers = _get_scrapers(r)
+            free_scrapers = _get_free_scrapers(scrapers, r)
+
+            if not free_scrapers:
                 time.sleep(3)
                 continue
 
-            scrapers = _get_scrapers(r)
-            scraper = _pick_scraper_round_robin(scrapers, r)
+            # Assign one query to each free scraper
+            assigned = 0
+            for scraper in free_scrapers:
+                query = r.lpop("query_queue")
+                if not query:
+                    break  # queue empty
 
-            if not scraper:
-                # No free scraper, push back and wait
-                r.rpush("query_queue", query)
-                time.sleep(5)
-                continue
+                tunnel_url = scraper["tunnel_url"]
 
-            tunnel_url = scraper["tunnel_url"]
+                # Lock scraper
+                r.set(f"scraper_busy:{tunnel_url}", "1", ex=600)
 
-            # Lock this scraper
-            r.set(f"scraper_busy:{tunnel_url}", "1", ex=600)
-
-            # Send scrape request
-            try:
-                resp = httpx.post(
-                    f"{tunnel_url}/api/v1/scrape",
-                    json={"query": query},
-                    timeout=15
-                )
-                data = resp.json()
-                if data.get("status") == "started":
-                    job_info = json.dumps({
-                        "query": query,
-                        "job_id": data["job_id"],
-                        "tunnel_url": tunnel_url,
-                        "started_at": time.time()
-                    })
-                    r.rpush("active_jobs", job_info)
-                elif data.get("status") == "busy":
-                    # Already busy (shouldn't happen with lock, but handle)
-                    r.rpush("query_queue", query)
-                else:
-                    # Error — push query back, release lock
+                # Send scrape request (non-blocking, fire and move on)
+                try:
+                    resp = httpx.post(
+                        f"{tunnel_url}/api/v1/scrape",
+                        json={"query": query},
+                        timeout=15
+                    )
+                    data = resp.json()
+                    if data.get("status") == "started":
+                        job_info = json.dumps({
+                            "query": query,
+                            "job_id": data["job_id"],
+                            "tunnel_url": tunnel_url,
+                            "started_at": time.time()
+                        })
+                        r.rpush("active_jobs", job_info)
+                        assigned += 1
+                    elif data.get("status") == "busy":
+                        # Scraper actually busy, push query back
+                        r.rpush("query_queue", query)
+                        # Don't release lock — it's genuinely busy
+                    else:
+                        # Error, push query back, release lock
+                        r.rpush("query_queue", query)
+                        r.delete(f"scraper_busy:{tunnel_url}")
+                except Exception:
+                    # Connection failed, push query back, release lock
                     r.rpush("query_queue", query)
                     r.delete(f"scraper_busy:{tunnel_url}")
-            except Exception:
-                r.rpush("query_queue", query)
-                r.delete(f"scraper_busy:{tunnel_url}")
+
+            # Small sleep between assignment cycles
+            time.sleep(2)
 
         except Exception:
-            time.sleep(5)
+            time.sleep(3)
 
 
 def _poll_active_jobs(r):
@@ -160,13 +159,14 @@ def _poll_active_jobs(r):
             elif data.get("status") == "error":
                 r.delete(f"scraper_busy:{tunnel_url}")
             else:
-                # Still running
+                # Still running — keep it
                 requeue.append(job_raw)
         except Exception:
-            # Connection failed — check timeout
+            # Connection failed
             if time.time() - job.get("started_at", 0) < 600:
                 requeue.append(job_raw)
             else:
+                # Timed out, release
                 r.delete(f"scraper_busy:{tunnel_url}")
 
     # Put still-running jobs back
