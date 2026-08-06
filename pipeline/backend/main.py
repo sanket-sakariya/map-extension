@@ -297,6 +297,19 @@ def pipeline_status(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/results/queries")
+def get_result_queries(db: Session = Depends(get_db)):
+    """Get all unique queries with result counts."""
+    rows = db.execute(sql_text(
+        "SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped "
+        "FROM businesses GROUP BY query ORDER BY MAX(scraped_at) DESC"
+    )).fetchall()
+    return {
+        "total": len(rows),
+        "queries": [{"query": r[0], "count": r[1], "last_scraped": str(r[2])} for r in rows]
+    }
+
+
 # ─── Results (optimized with filters) ──────────────────────────────────────
 
 @app.get("/api/results")

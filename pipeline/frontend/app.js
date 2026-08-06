@@ -78,8 +78,8 @@ function renderIcons() {
   renderStepper();
 
   // Results
-  document.getElementById('filter-title').innerHTML = `${icons.filter} Filters`;
   document.getElementById('btn-search').innerHTML = `${icons.search} Search`;
+  document.getElementById('btn-back').innerHTML = `${icons.chevronLeft} Back to Queries`;
 
   // Settings
   document.getElementById('pat-title').innerHTML = `${icons.key} GitHub Authentication`;
@@ -299,7 +299,64 @@ async function generateQueries() {
 }
 
 // ─── Results Page ───────────────────────────────────────────────────────────
+let selectedQuery = '';
+
 async function loadResults() {
+  if (!selectedQuery) {
+    await loadQueryList();
+    return;
+  }
+  await loadQueryResults();
+}
+
+async function loadQueryList() {
+  const d = await api('/api/results/queries');
+  const tbody = document.getElementById('results-tbody');
+  const info = document.getElementById('results-info');
+
+  // Hide filters when showing query list
+  document.getElementById('results-filters').style.display = 'none';
+  document.getElementById('results-back').style.display = 'none';
+
+  if (!d.queries?.length) {
+    info.textContent = 'No completed queries yet';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet. Generate queries and wait for the pipeline to process them.</td></tr>';
+    document.getElementById('pagination').innerHTML = '';
+    return;
+  }
+
+  info.textContent = `${d.total} completed queries`;
+
+  // Change table headers for query list view
+  document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
+
+  tbody.innerHTML = d.queries.map(q => `
+    <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
+      <td style="font-weight:500;">${q.query}</td>
+      <td><span class="tag tag-blue">${q.count} businesses</span></td>
+      <td style="font-size:12px;color:var(--text-muted);">${new Date(q.last_scraped).toLocaleString()}</td>
+      <td><button class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();openQuery('${q.query.replace(/'/g, "\\'")}')">${icons.chevronRight} View</button></td>
+    </tr>
+  `).join('');
+
+  document.getElementById('pagination').innerHTML = '';
+}
+
+function openQuery(query) {
+  selectedQuery = query;
+  resultsPage = 1;
+  document.getElementById('results-filters').style.display = 'flex';
+  document.getElementById('results-back').style.display = 'flex';
+  document.getElementById('results-thead').innerHTML = '<tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr>';
+  loadQueryResults();
+}
+
+function backToQueries() {
+  selectedQuery = '';
+  loadQueryList();
+}
+
+async function loadQueryResults() {
   const search = document.getElementById('r-search').value;
   const city = document.getElementById('r-city').value;
   const category = document.getElementById('r-category').value;
@@ -308,11 +365,12 @@ async function loadResults() {
   const offset = (resultsPage - 1) * RESULTS_PER_PAGE;
 
   const params = new URLSearchParams({
-    limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only
+    limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only,
+    query: selectedQuery
   });
 
   const d = await api(`/api/results?${params}`);
-  document.getElementById('results-info').textContent = `${d.total || 0} results found`;
+  document.getElementById('results-info').innerHTML = `<span style="font-weight:600;color:var(--primary);">${selectedQuery}</span> — ${d.total || 0} results`;
 
   const tbody = document.getElementById('results-tbody');
   if (!d.results?.length) {
@@ -323,7 +381,6 @@ async function loadResults() {
     ).join('');
   }
 
-  // Pagination
   const totalPages = Math.ceil((d.total || 0) / RESULTS_PER_PAGE);
   renderPagination(totalPages);
 }

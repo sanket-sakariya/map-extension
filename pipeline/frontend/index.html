@@ -121,22 +121,28 @@
     <div class="page" id="page-results">
       <div class="page-header">
         <h2>Scraped Data</h2>
-        <p>Browse and filter results stored in the database</p>
+        <p>Browse results grouped by query</p>
       </div>
       <div class="card">
-        <div class="card-title" id="filter-title"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <!-- Back button (hidden by default) -->
+        <div id="results-back" style="display:none;margin-bottom:12px;">
+          <button class="btn btn-outline" onclick="backToQueries()" id="btn-back"></button>
+        </div>
+
+        <!-- Filters (hidden until a query is opened) -->
+        <div id="results-filters" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           <input type="text" class="input" id="r-search" placeholder="Search name or address..." style="width:200px;">
           <input type="text" class="input" id="r-city" placeholder="City" style="width:120px;">
           <input type="text" class="input" id="r-category" placeholder="Category" style="width:130px;">
           <input type="number" class="input" id="r-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-phone"> Phone only</label>
-          <button class="btn btn-primary" id="btn-search" onclick="loadResults()"></button>
+          <button class="btn btn-primary" id="btn-search" onclick="loadQueryResults()"></button>
         </div>
+
         <div id="results-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr></thead>
+            <thead id="results-thead"><tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr></thead>
             <tbody id="results-tbody"></tbody>
           </table>
         </div>
