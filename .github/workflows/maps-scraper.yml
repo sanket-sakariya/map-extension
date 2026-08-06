@@ -232,6 +232,20 @@ jobs:
               print(f'⚠️ Response: {json.dumps(d, indent=2)[:500]}')
           "
 
+      - name: Save tunnel URLs to artifact
+        run: |
+          mkdir -p /tmp/tunnel-info
+          echo "${{ steps.scraper_tunnel.outputs.scraper_tunnel_url }}" > /tmp/tunnel-info/scraper-url.txt
+          echo "${{ steps.vnc_tunnel.outputs.tunnel_url }}" > /tmp/tunnel-info/vnc-url.txt
+          echo "✅ Tunnel URLs saved for artifact upload"
+
+      - name: Upload tunnel URLs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-urls
+          path: /tmp/tunnel-info/
+          retention-days: 1
+
       - name: Display Connection Info
         run: |
           echo ""
