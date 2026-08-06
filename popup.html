@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { width: 360px; font-family: system-ui; padding: 12px; }
+    button { border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; margin-right: 6px; color: #fff; }
+    #start { background: #1a73e8; }
+    #download { background: #34a853; display: none; }
+    #clear { background: #ea4335; display: none; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #status { margin-top: 10px; font-size: 13px; color: #555; }
+    #progress { margin-top: 6px; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden; display: none; }
+    #progressBar { height: 100%; background: #1a73e8; transition: width 0.3s; }
+    #results { margin-top: 10px; max-height: 250px; overflow-y: auto; font-size: 11px; white-space: pre-wrap; background: #f5f5f5; padding: 8px; border-radius: 4px; display: none; }
+  </style>
+</head>
+<body>
+  <button id="start">Start Scraping</button>
+  <button id="download">Download JSON</button>
+  <button id="clear">Clear</button>
+  <div id="status"></div>
+  <div id="progress"><div id="progressBar" style="width: 0%"></div></div>
+  <pre id="results"></pre>
+  <script src="popup.js"></script>
+</body>
+</html>
