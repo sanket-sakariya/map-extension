@@ -27,7 +27,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
@@ -71,20 +70,14 @@ def create_driver():
 
 
 def search_google_maps(driver, query):
-    """Navigate to Google Maps and search for the query."""
-    driver.get("https://www.google.com/maps")
-    time.sleep(2)
+    """Navigate to Google Maps search results directly via URL."""
+    import urllib.parse
+    encoded_query = urllib.parse.quote_plus(query)
+    url = f"https://www.google.com/maps/search/{encoded_query}/"
+    driver.get(url)
 
-    # Find search box and type query
-    search_box = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, "searchboxinput"))
-    )
-    search_box.clear()
-    search_box.send_keys(query)
-    search_box.send_keys(Keys.ENTER)
-
-    # Wait for results to load
-    WebDriverWait(driver, 15).until(
+    # Wait for results to load (listing cards appear)
+    WebDriverWait(driver, 20).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "a.hfpxzc"))
     )
     time.sleep(2)
