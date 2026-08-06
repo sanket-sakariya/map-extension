@@ -483,7 +483,11 @@ function toast(message, type = 'success') {
   const container = document.getElementById('toast-container');
   const el = document.createElement('div');
   el.className = `toast ${type}`;
-  el.innerHTML = `${type === 'success' ? icons.check : icons.x}<span>${message}</span>`;
+  const icon = type === 'success' ? icons.check : icons.x;
+  el.innerHTML = `${icon}<span>${message}</span>`;
   container.appendChild(el);
-  setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3000);
+  setTimeout(() => {
+    el.classList.add('hiding');
+    setTimeout(() => el.remove(), 300);
+  }, 3000);
 }
