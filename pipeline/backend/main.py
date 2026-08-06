@@ -68,10 +68,6 @@ class ConfigRequest(BaseModel):
 class WorkflowStartRequest(BaseModel):
     count: int = 1
 
-class QueryGenerateRequest(BaseModel):
-    cities: list[str] = query_generator.DEFAULT_CITIES
-    businesses: list[str] = query_generator.DEFAULT_BUSINESSES
-
 class ScraperRegisterRequest(BaseModel):
     run_id: int
     tunnel_url: str
@@ -207,13 +203,49 @@ def stop_workflows(db: Session = Depends(get_db)):
 
 # ─── Query Generation ───────────────────────────────────────────────────────
 
+class QueryGenerateRequest(BaseModel):
+    mode: str = "all_biz_all_loc"  # one_biz_all_loc, one_loc_all_biz, all_biz_all_loc
+    businesses: list[str] = []
+    locations: list[str] = []
+    modifier: str = "in"
+
+
+@app.get("/api/categories")
+def get_categories():
+    """Return all 4074 GMB business categories."""
+    cats = query_generator.get_business_categories()
+    return {"count": len(cats), "categories": cats}
+
+
+@app.get("/api/countries")
+def get_countries():
+    """Return all 249 countries."""
+    countries = query_generator.get_countries()
+    return {"count": len(countries), "countries": countries}
+
+
+@app.get("/api/cities")
+def get_cities(country: str = "India"):
+    """Return all cities/districts for a country."""
+    cities = query_generator.get_cities(country)
+    return {"country": country, "count": len(cities), "cities": cities}
+
+
 @app.post("/api/queries/generate")
 def generate_queries(req: QueryGenerateRequest):
-    queries = query_generator.generate_queries(req.cities, req.businesses)
+    """Generate queries and push to queue.
+    mode: one_biz_all_loc | one_loc_all_biz | all_biz_all_loc
+    """
+    queries = query_generator.generate_queries(
+        mode=req.mode,
+        businesses=req.businesses,
+        locations=req.locations,
+        modifier=req.modifier
+    )
     r = get_redis()
     for q in queries:
         r.rpush("query_queue", q)
-    return {"generated": len(queries), "queries": queries[:20]}
+    return {"generated": len(queries), "preview": queries[:20]}
 
 
 # ─── Pipeline Status ────────────────────────────────────────────────────────
