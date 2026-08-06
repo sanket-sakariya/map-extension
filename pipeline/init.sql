@@ -1,5 +1,23 @@
 -- Optimized schema for fast lookups on any field
 
+-- Settings (PAT token, config)
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Active scrapers (self-registered by workflows)
+CREATE TABLE IF NOT EXISTS active_scrapers (
+    id SERIAL PRIMARY KEY,
+    run_id BIGINT UNIQUE,
+    tunnel_url TEXT NOT NULL,
+    registered_at TIMESTAMP DEFAULT NOW(),
+    last_heartbeat TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrapers_tunnel ON active_scrapers(tunnel_url);
+
 CREATE TABLE IF NOT EXISTS businesses (
     id SERIAL PRIMARY KEY,
 

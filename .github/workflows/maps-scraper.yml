@@ -2,6 +2,11 @@ name: Maps Scraper VNC
 
 on:
   workflow_dispatch:
+    inputs:
+      pipeline_url:
+        description: 'Pipeline backend URL (e.g., https://your-pipeline.trycloudflare.com)'
+        required: false
+        default: ''
 
 env:
   DISPLAY: ":1"
@@ -271,6 +276,24 @@ jobs:
           echo "📋 Response: {status, query, total, results: [{name, rating, phone, address, cid, placeId, ...}]}"
           echo ""
 
+      - name: Register with Pipeline Backend
+        if: ${{ github.event.inputs.pipeline_url != '' }}
+        env:
+          PIPELINE_URL: ${{ github.event.inputs.pipeline_url }}
+          SCRAPER_TUNNEL_URL: ${{ steps.scraper_tunnel.outputs.scraper_tunnel_url }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          echo "Registering scraper with pipeline backend..."
+          RESP=$(curl -s --max-time 10 -X POST "$PIPELINE_URL/api/scrapers/register" \
+            -H "Content-Type: application/json" \
+            -d "{\"run_id\": $RUN_ID, \"tunnel_url\": \"$SCRAPER_TUNNEL_URL\"}")
+          echo "Response: $RESP"
+          if echo "$RESP" | grep -q '"registered"'; then
+            echo "✅ Registered with pipeline: run_id=$RUN_ID tunnel=$SCRAPER_TUNNEL_URL"
+          else
+            echo "⚠️ Registration failed (pipeline may not be reachable): $RESP"
+          fi
+
       - name: Keep Session Alive
         run: |
           export PATH=$PATH:/opt/TurboVNC/bin
@@ -315,8 +338,21 @@ jobs:
       - name: Cleanup
         if: always()
         timeout-minutes: 1
+        env:
+          PIPELINE_URL: ${{ github.event.inputs.pipeline_url }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           export PATH=$PATH:/opt/TurboVNC/bin
+
+          # Deregister from pipeline backend
+          if [ -n "$PIPELINE_URL" ]; then
+            echo "Deregistering from pipeline..."
+            curl -s --max-time 10 -X POST "$PIPELINE_URL/api/scrapers/deregister" \
+              -H "Content-Type: application/json" \
+              -d "{\"run_id\": $RUN_ID}" || true
+            echo "✅ Deregistered"
+          fi
+
           pkill -f "server.py" || true
           pkill -x cloudflared || true
           vncserver -kill :1 || true

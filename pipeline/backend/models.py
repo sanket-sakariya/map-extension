@@ -4,6 +4,15 @@ from sqlalchemy.sql import func
 from database import Base
 
 
+class ActiveScraper(Base):
+    __tablename__ = "active_scrapers"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(BigInteger, unique=True)
+    tunnel_url = Column(Text, nullable=False)
+    registered_at = Column(TIMESTAMP, server_default=func.now())
+    last_heartbeat = Column(TIMESTAMP, server_default=func.now())
+
+
 class Business(Base):
     __tablename__ = "businesses"
     id = Column(Integer, primary_key=True)

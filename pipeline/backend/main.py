@@ -8,31 +8,46 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import text as sql_text
 
 from config import REDIS_URL
-from database import get_db, engine, Base
-from models import Business, ScrapeJob
+from database import get_db, engine, Base, SessionLocal
+from models import Business, ScrapeJob, ActiveScraper
 import github_client
 import query_generator
 import orchestrator
 import db_writer
 
-# State
-_pat = ""
+
+def get_pat() -> str:
+    """Read PAT from DB."""
+    db = SessionLocal()
+    try:
+        row = db.execute(sql_text("SELECT value FROM settings WHERE key = 'github_pat'")).fetchone()
+        return row[0] if row else ""
+    finally:
+        db.close()
 
 
-def get_pat():
-    return _pat
+def save_pat(pat: str):
+    """Persist PAT in DB."""
+    db = SessionLocal()
+    try:
+        db.execute(sql_text(
+            "INSERT INTO settings (key, value, updated_at) VALUES ('github_pat', :pat, NOW()) "
+            "ON CONFLICT (key) DO UPDATE SET value = :pat, updated_at = NOW()"
+        ), {"pat": pat})
+        db.commit()
+    finally:
+        db.close()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     Base.metadata.create_all(bind=engine)
     db_writer.start()
     orchestrator.start(get_pat)
     yield
-    # Shutdown
     orchestrator.stop()
     db_writer.stop()
 
@@ -45,7 +60,7 @@ def get_redis():
     return redis_lib.from_url(REDIS_URL, decode_responses=True)
 
 
-# ─── Models ─────────────────────────────────────────────────────────────────
+# ─── Request Models ─────────────────────────────────────────────────────────
 
 class ConfigRequest(BaseModel):
     pat: str
@@ -57,64 +72,140 @@ class QueryGenerateRequest(BaseModel):
     cities: list[str] = query_generator.DEFAULT_CITIES
     businesses: list[str] = query_generator.DEFAULT_BUSINESSES
 
+class ScraperRegisterRequest(BaseModel):
+    run_id: int
+    tunnel_url: str
 
-# ─── Endpoints ──────────────────────────────────────────────────────────────
+class ScraperDeregisterRequest(BaseModel):
+    run_id: int
+
+
+# ─── Config (PAT persisted in DB) ──────────────────────────────────────────
 
 @app.post("/api/config")
 def set_config(req: ConfigRequest):
-    global _pat
     result = github_client.validate_pat(req.pat)
     if result["valid"]:
-        _pat = req.pat
-        return {"status": "ok", "message": "PAT validated and saved"}
+        save_pat(req.pat)
+        return {"status": "ok", "message": "PAT validated and saved to DB"}
     return {"status": "error", "message": result.get("error", "Invalid PAT")}
 
 
 @app.get("/api/config")
 def get_config():
-    return {"pat_set": bool(_pat)}
+    pat = get_pat()
+    return {"pat_set": bool(pat), "pat_preview": f"{pat[:10]}...{pat[-4:]}" if pat else ""}
 
+
+# ─── Scraper Registration (called by workflows) ────────────────────────────
+
+@app.post("/api/scrapers/register")
+def register_scraper(req: ScraperRegisterRequest, db: Session = Depends(get_db)):
+    """Workflow calls this on startup to register its tunnel URL."""
+    existing = db.query(ActiveScraper).filter_by(run_id=req.run_id).first()
+    if existing:
+        existing.tunnel_url = req.tunnel_url
+        existing.last_heartbeat = sql_text("NOW()")
+    else:
+        db.add(ActiveScraper(run_id=req.run_id, tunnel_url=req.tunnel_url))
+    db.commit()
+
+    # Also update Redis for orchestrator
+    r = get_redis()
+    r.sadd("active_scrapers", json.dumps({"run_id": req.run_id, "tunnel_url": req.tunnel_url}))
+    return {"status": "registered", "run_id": req.run_id, "tunnel_url": req.tunnel_url}
+
+
+@app.post("/api/scrapers/deregister")
+def deregister_scraper(req: ScraperDeregisterRequest, db: Session = Depends(get_db)):
+    """Workflow calls this on shutdown to remove itself."""
+    scraper = db.query(ActiveScraper).filter_by(run_id=req.run_id).first()
+    tunnel_url = ""
+    if scraper:
+        tunnel_url = scraper.tunnel_url
+        db.delete(scraper)
+        db.commit()
+
+    # Remove from Redis
+    r = get_redis()
+    for member in r.smembers("active_scrapers"):
+        try:
+            data = json.loads(member)
+            if data.get("run_id") == req.run_id:
+                r.srem("active_scrapers", member)
+        except:
+            pass
+    # Clean up busy lock
+    if tunnel_url:
+        r.delete(f"scraper_busy:{tunnel_url}")
+
+    return {"status": "deregistered", "run_id": req.run_id}
+
+
+@app.get("/api/scrapers")
+def list_scrapers(db: Session = Depends(get_db)):
+    """List all registered scrapers."""
+    scrapers = db.query(ActiveScraper).all()
+    return {
+        "count": len(scrapers),
+        "scrapers": [
+            {"run_id": s.run_id, "tunnel_url": s.tunnel_url, "registered_at": str(s.registered_at)}
+            for s in scrapers
+        ]
+    }
+
+
+# ─── Workflow Management ────────────────────────────────────────────────────
 
 @app.get("/api/workflows")
-def get_workflows():
-    if not _pat:
+def get_workflows(db: Session = Depends(get_db)):
+    pat = get_pat()
+    if not pat:
         return {"error": "PAT not configured"}
-    scrapers = github_client.get_active_scrapers(_pat)
-    # Update active_scrapers in Redis
-    r = get_redis()
-    r.delete("active_scrapers")
-    for s in scrapers:
-        if s["tunnel_url"]:
-            r.sadd("active_scrapers", json.dumps(s))
-    return {"active": len(scrapers), "scrapers": scrapers}
+    # Return scrapers from DB (more reliable than GitHub API)
+    scrapers = db.query(ActiveScraper).all()
+    return {
+        "active": len(scrapers),
+        "scrapers": [
+            {"run_id": s.run_id, "tunnel_url": s.tunnel_url, "registered_at": str(s.registered_at)}
+            for s in scrapers
+        ]
+    }
 
 
 @app.post("/api/workflows/start")
 def start_workflows(req: WorkflowStartRequest):
-    if not _pat:
+    pat = get_pat()
+    if not pat:
         return {"error": "PAT not configured"}
     results = []
     for _ in range(req.count):
-        res = github_client.trigger_workflow(_pat)
+        res = github_client.trigger_workflow(pat)
         results.append(res)
-        time.sleep(1)  # avoid rate limit
+        time.sleep(1)
     return {"triggered": req.count, "results": results}
 
 
 @app.post("/api/workflows/stop")
-def stop_workflows():
-    if not _pat:
+def stop_workflows(db: Session = Depends(get_db)):
+    pat = get_pat()
+    if not pat:
         return {"error": "PAT not configured"}
-    runs = github_client.list_runs(_pat, "in_progress")
+    runs = github_client.list_runs(pat, "in_progress")
     cancelled = 0
     for run in runs:
         if run.get("name") == "Maps Scraper VNC":
-            if github_client.cancel_run(_pat, run["id"]):
+            if github_client.cancel_run(pat, run["id"]):
                 cancelled += 1
+    # Clear all scrapers from DB (they'll deregister anyway on cleanup)
+    db.query(ActiveScraper).delete()
+    db.commit()
     r = get_redis()
     r.delete("active_scrapers")
     return {"cancelled": cancelled}
 
+
+# ─── Query Generation ───────────────────────────────────────────────────────
 
 @app.post("/api/queries/generate")
 def generate_queries(req: QueryGenerateRequest):
@@ -125,17 +216,22 @@ def generate_queries(req: QueryGenerateRequest):
     return {"generated": len(queries), "queries": queries[:20]}
 
 
+# ─── Pipeline Status ────────────────────────────────────────────────────────
+
 @app.get("/api/pipeline/status")
-def pipeline_status():
+def pipeline_status(db: Session = Depends(get_db)):
     r = get_redis()
+    scraper_count = db.query(ActiveScraper).count()
     return {
         "query_queue": r.llen("query_queue"),
         "active_jobs": r.llen("active_jobs"),
         "result_queue": r.llen("result_queue"),
-        "active_scrapers": r.scard("active_scrapers"),
+        "active_scrapers": scraper_count,
         "total_inserted": int(r.get("stats:total_inserted") or 0)
     }
 
+
+# ─── Results (optimized with filters) ──────────────────────────────────────
 
 @app.get("/api/results")
 def get_results(
@@ -151,19 +247,8 @@ def get_results(
     phone_only: bool = False,
     db: Session = Depends(get_db)
 ):
-    """
-    Fast filtered search across all businesses.
-    - search: full-text search on name+address+category
-    - query: filter by scrape query
-    - city/state/category: exact match filters
-    - min_rating/min_reviews: numeric filters
-    - phone_only: only businesses with phone numbers
-    """
-    from sqlalchemy import text as sql_text, func as sql_func
-
     q = db.query(Business)
 
-    # Full-text search (uses GIN index)
     if search:
         q = q.filter(sql_text(
             "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
