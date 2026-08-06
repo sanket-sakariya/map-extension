@@ -314,23 +314,31 @@ async function loadQueryList() {
   const tbody = document.getElementById('results-tbody');
   const info = document.getElementById('results-info');
 
-  // Hide filters when showing query list
+  // Show query-level filters, hide detail-level filters
   document.getElementById('results-filters').style.display = 'none';
   document.getElementById('results-back').style.display = 'none';
+  document.getElementById('query-filters').style.display = 'flex';
 
   if (!d.queries?.length) {
     info.textContent = 'No completed queries yet';
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet. Generate queries and wait for the pipeline to process them.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet. Generate queries and wait for the pipeline to process them.</td></tr>';
     document.getElementById('pagination').innerHTML = '';
     return;
   }
 
-  info.textContent = `${d.total} completed queries`;
+  // Apply local filter
+  const filterText = document.getElementById('q-filter').value.toLowerCase();
+  let queries = d.queries;
+  if (filterText) {
+    queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
+  }
+
+  info.textContent = `${queries.length} of ${d.total} completed queries`;
 
   // Change table headers for query list view
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
 
-  tbody.innerHTML = d.queries.map(q => `
+  tbody.innerHTML = queries.map(q => `
     <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
       <td style="font-weight:500;">${q.query}</td>
       <td><span class="tag tag-blue">${q.count} businesses</span></td>
@@ -345,6 +353,7 @@ async function loadQueryList() {
 function openQuery(query) {
   selectedQuery = query;
   resultsPage = 1;
+  document.getElementById('query-filters').style.display = 'none';
   document.getElementById('results-filters').style.display = 'flex';
   document.getElementById('results-back').style.display = 'flex';
   document.getElementById('results-thead').innerHTML = '<tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr>';

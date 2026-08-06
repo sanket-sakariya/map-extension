@@ -129,7 +129,12 @@
           <button class="btn btn-outline" onclick="backToQueries()" id="btn-back"></button>
         </div>
 
-        <!-- Filters (hidden until a query is opened) -->
+        <!-- Query-level filters (shown on query list) -->
+        <div id="query-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <input type="text" class="input" id="q-filter" placeholder="Filter by business, city, or keyword..." style="width:300px;" oninput="loadQueryList()">
+        </div>
+
+        <!-- Detail-level filters (shown when viewing a specific query's results) -->
         <div id="results-filters" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           <input type="text" class="input" id="r-search" placeholder="Search name or address..." style="width:200px;">
           <input type="text" class="input" id="r-city" placeholder="City" style="width:120px;">
