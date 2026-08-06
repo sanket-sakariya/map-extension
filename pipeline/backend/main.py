@@ -90,7 +90,32 @@ def set_config(req: ConfigRequest):
 @app.get("/api/config")
 def get_config():
     pat = get_pat()
-    return {"pat_set": bool(pat), "pat_preview": f"{pat[:10]}...{pat[-4:]}" if pat else ""}
+    # Also get tunnel URL
+    db = SessionLocal()
+    try:
+        row = db.execute(sql_text("SELECT value FROM settings WHERE key = 'tunnel_url'")).fetchone()
+        tunnel_url = row[0] if row else ""
+    finally:
+        db.close()
+    return {"pat_set": bool(pat), "pat_preview": f"{pat[:10]}...{pat[-4:]}" if pat else "", "tunnel_url": tunnel_url}
+
+
+@app.post("/api/config/tunnel")
+def set_tunnel_url(data: dict):
+    """Store the public tunnel URL (called by startup script or manually)."""
+    url = data.get("url", "").strip()
+    if not url:
+        return {"status": "error", "message": "Missing url"}
+    db = SessionLocal()
+    try:
+        db.execute(sql_text(
+            "INSERT INTO settings (key, value, updated_at) VALUES ('tunnel_url', :url, NOW()) "
+            "ON CONFLICT (key) DO UPDATE SET value = :url, updated_at = NOW()"
+        ), {"url": url})
+        db.commit()
+    finally:
+        db.close()
+    return {"status": "ok", "tunnel_url": url}
 
 
 # ─── Scraper Registration (called by workflows) ────────────────────────────
@@ -174,12 +199,21 @@ def start_workflows(req: WorkflowStartRequest):
     pat = get_pat()
     if not pat:
         return {"error": "PAT not configured"}
+
+    # Get tunnel URL to pass to workflows for self-registration
+    db = SessionLocal()
+    try:
+        row = db.execute(sql_text("SELECT value FROM settings WHERE key = 'tunnel_url'")).fetchone()
+        pipeline_url = row[0] if row else ""
+    finally:
+        db.close()
+
     results = []
     for _ in range(req.count):
-        res = github_client.trigger_workflow(pat)
+        res = github_client.trigger_workflow(pat, pipeline_url)
         results.append(res)
         time.sleep(1)
-    return {"triggered": req.count, "results": results}
+    return {"triggered": req.count, "pipeline_url": pipeline_url, "results": results}
 
 
 @app.post("/api/workflows/stop")

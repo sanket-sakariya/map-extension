@@ -18,12 +18,16 @@ def validate_pat(pat: str) -> dict:
     return {"valid": False, "error": r.text}
 
 
-def trigger_workflow(pat: str) -> dict:
-    """Trigger maps-scraper.yml workflow_dispatch."""
+def trigger_workflow(pat: str, pipeline_url: str = "") -> dict:
+    """Trigger maps-scraper workflow_dispatch with pipeline_url input."""
+    inputs = {}
+    if pipeline_url:
+        inputs["pipeline_url"] = pipeline_url
+
     r = httpx.post(
         f"{API}/repos/{GITHUB_REPO}/actions/workflows/{WORKFLOW_FILE}/dispatches",
         headers=headers(pat),
-        json={"ref": "main"},
+        json={"ref": "main", "inputs": inputs},
         timeout=10
     )
     if r.status_code == 204:
