@@ -300,6 +300,8 @@ async function generateQueries() {
 
 // ─── Results Page ───────────────────────────────────────────────────────────
 let selectedQuery = '';
+let queryListPage = 1;
+const QUERIES_PER_PAGE = 20;
 
 async function loadResults() {
   if (!selectedQuery) {
@@ -333,12 +335,19 @@ async function loadQueryList() {
     queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
   }
 
-  info.textContent = `${queries.length} of ${d.total} completed queries`;
+  const totalFiltered = queries.length;
+  const totalPages = Math.ceil(totalFiltered / QUERIES_PER_PAGE);
+
+  // Paginate
+  const start = (queryListPage - 1) * QUERIES_PER_PAGE;
+  const pageQueries = queries.slice(start, start + QUERIES_PER_PAGE);
+
+  info.textContent = `${totalFiltered} of ${d.total} completed queries (page ${queryListPage}/${totalPages || 1})`;
 
   // Change table headers for query list view
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
 
-  tbody.innerHTML = queries.map(q => `
+  tbody.innerHTML = pageQueries.map(q => `
     <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
       <td style="font-weight:500;">${q.query}</td>
       <td><span class="tag tag-blue">${q.count} businesses</span></td>
@@ -347,8 +356,27 @@ async function loadQueryList() {
     </tr>
   `).join('');
 
-  document.getElementById('pagination').innerHTML = '';
+  renderQueryPagination(totalPages);
 }
+
+function renderQueryPagination(totalPages) {
+  const container = document.getElementById('pagination');
+  if (totalPages <= 1) { container.innerHTML = ''; return; }
+
+  let html = '';
+  html += `<div class="page-btn" onclick="goQueryPage(${queryListPage - 1})" ${queryListPage <= 1 ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronLeft}</div>`;
+
+  const start = Math.max(1, queryListPage - 2);
+  const end = Math.min(totalPages, queryListPage + 2);
+  for (let i = start; i <= end; i++) {
+    html += `<div class="page-btn ${i === queryListPage ? 'active' : ''}" onclick="goQueryPage(${i})">${i}</div>`;
+  }
+
+  html += `<div class="page-btn" onclick="goQueryPage(${queryListPage + 1})" ${queryListPage >= totalPages ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronRight}</div>`;
+  container.innerHTML = html;
+}
+
+function goQueryPage(n) { queryListPage = n; loadQueryList(); }
 
 function openQuery(query) {
   selectedQuery = query;
