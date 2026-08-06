@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scraper-autoscaler
+  namespace: map-extractor
+spec:
+  schedule: "*/5 * * * *"  # Every 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 300
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: autoscaler
+            image: curlimages/curl:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              BACKEND="http://backend.map-extractor.svc.cluster.local:8000"
+              MIN_SCRAPERS=10
+              MAX_SCRAPERS=20
+
+              echo "=== Scraper Autoscaler ==="
+              echo "Min: $MIN_SCRAPERS | Max: $MAX_SCRAPERS"
+
+              # Get current active scrapers
+              RESPONSE=$(curl -s "$BACKEND/api/scrapers")
+              CURRENT=$(echo "$RESPONSE" | grep -o '"count":[0-9]*' | grep -o '[0-9]*')
+              CURRENT=${CURRENT:-0}
+              echo "Current active scrapers: $CURRENT"
+
+              # Check queue depth
+              STATUS=$(curl -s "$BACKEND/api/pipeline/status")
+              QUEUE=$(echo "$STATUS" | grep -o '"query_queue":[0-9]*' | grep -o '[0-9]*' | head -1)
+              QUEUE=${QUEUE:-0}
+              echo "Query queue: $QUEUE"
+
+              # If below minimum and there are queries, start more
+              if [ "$CURRENT" -lt "$MIN_SCRAPERS" ] && [ "$QUEUE" -gt 0 ]; then
+                NEED=$((MIN_SCRAPERS - CURRENT))
+                # Don't exceed max
+                if [ $((CURRENT + NEED)) -gt "$MAX_SCRAPERS" ]; then
+                  NEED=$((MAX_SCRAPERS - CURRENT))
+                fi
+                if [ "$NEED" -gt 0 ]; then
+                  echo "Starting $NEED scraper(s)..."
+                  RESULT=$(curl -s -X POST "$BACKEND/api/workflows/start" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"count\": $NEED}")
+                  echo "Result: $RESULT"
+                fi
+              elif [ "$CURRENT" -ge "$MAX_SCRAPERS" ]; then
+                echo "Already at max ($MAX_SCRAPERS). No action."
+              elif [ "$QUEUE" -eq 0 ]; then
+                echo "Queue empty. No action needed."
+              else
+                echo "Scrapers OK ($CURRENT). No action."
+              fi
+
+              echo "=== Done ==="
