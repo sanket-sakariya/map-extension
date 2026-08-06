@@ -1,0 +1,42 @@
+from sqlalchemy import Column, Integer, Text, TIMESTAMP, BigInteger
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.sql import func
+from database import Base
+
+
+class Business(Base):
+    __tablename__ = "businesses"
+    id = Column(Integer, primary_key=True)
+    name = Column(Text, nullable=False)
+    rating = Column(Text)
+    review_count = Column(Text)
+    category = Column(Text)
+    address = Column(Text)
+    phone = Column(Text)
+    plus_code = Column(Text)
+    website = Column(Text)
+    hours = Column(JSONB)
+    current_status = Column(Text)
+    identifies_as = Column(Text)
+    cid = Column(Text)
+    place_id = Column(Text)
+    maps_url = Column(Text)
+    reviews = Column(JSONB)
+    query = Column(Text)
+    scraped_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class ScrapeJob(Base):
+    __tablename__ = "scrape_jobs"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Text, nullable=False)
+    query = Column(Text, nullable=False)
+    workflow_run_id = Column(BigInteger)
+    tunnel_url = Column(Text)
+    status = Column(Text, default="queued")
+    total = Column(Integer, default=0)
+    progress = Column(Integer, default=0)
+    results_count = Column(Integer, default=0)
+    error = Column(Text)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    completed_at = Column(TIMESTAMP)

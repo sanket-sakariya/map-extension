@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maps Scraper Pipeline</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #f0f2f5; color: #333; }
+.container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+h1 { font-size: 24px; margin-bottom: 20px; }
+.card { background: #fff; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: #555; }
+label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
+input, textarea, select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-bottom: 10px; }
+button { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; color: #fff; margin-right: 8px; }
+.btn-blue { background: #1a73e8; }
+.btn-green { background: #34a853; }
+.btn-red { background: #ea4335; }
+.btn-orange { background: #f59e0b; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { text-align: center; padding: 12px; background: #f8f9fa; border-radius: 6px; }
+.stat .num { font-size: 28px; font-weight: bold; color: #1a73e8; }
+.stat .lbl { font-size: 12px; color: #666; margin-top: 4px; }
+.log { background: #1e1e1e; color: #0f0; font-family: monospace; font-size: 12px; padding: 12px; border-radius: 4px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px; text-align: left; border-bottom: 1px solid #eee; }
+th { background: #f8f9fa; }
+.status-badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+.status-running { background: #e8f5e9; color: #2e7d32; }
+.status-queued { background: #fff3e0; color: #e65100; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>🗺️ Maps Scraper Pipeline</h1>
+
+<!-- Config -->
+<div class="card">
+  <h2>⚙️ Configuration</h2>
+  <label>GitHub PAT Token (for this repo)</label>
+  <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxx">
+  <button class="btn-blue" onclick="savePat()">Save & Validate</button>
+  <span id="pat-status"></span>
+</div>
+
+<!-- Workflows -->
+<div class="card">
+  <h2>🚀 Workflow Scrapers</h2>
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+    <label style="margin:0; width:auto;">Count:</label>
+    <input type="number" id="wf-count" value="2" min="1" max="10" style="width:60px;">
+    <button class="btn-green" onclick="startWorkflows()">Start</button>
+    <button class="btn-red" onclick="stopWorkflows()">Stop All</button>
+    <button class="btn-orange" onclick="refreshWorkflows()">Refresh</button>
+  </div>
+  <div id="scrapers-list"></div>
+</div>
+
+<!-- Pipeline Status -->
+<div class="card">
+  <h2>📊 Pipeline Status</h2>
+  <div class="stats" id="pipeline-stats">
+    <div class="stat"><div class="num" id="s-queries">0</div><div class="lbl">Query Queue</div></div>
+    <div class="stat"><div class="num" id="s-active">0</div><div class="lbl">Active Jobs</div></div>
+    <div class="stat"><div class="num" id="s-results">0</div><div class="lbl">Result Queue</div></div>
+    <div class="stat"><div class="num" id="s-scrapers">0</div><div class="lbl">Scrapers</div></div>
+    <div class="stat"><div class="num" id="s-inserted">0</div><div class="lbl">DB Inserted</div></div>
+  </div>
+</div>
+
+<!-- Query Generator -->
+<div class="card">
+  <h2>🔍 Query Generator</h2>
+  <label>Cities (one per line)</label>
+  <textarea id="cities" rows="4">Rajkot
+Ahmedabad
+Surat
+Vadodara</textarea>
+  <label>Business Types (one per line)</label>
+  <textarea id="businesses" rows="4">salon
+hotel
+restaurant
+gym</textarea>
+  <button class="btn-blue" onclick="generateQueries()">Generate & Queue</button>
+  <span id="gen-status"></span>
+</div>
+
+<!-- Results -->
+<div class="card">
+  <h2>📋 Scraped Data (from DB)</h2>
+  <button class="btn-blue" onclick="loadResults()">Load Results</button>
+  <span id="results-count"></span>
+  <div style="overflow-x:auto; margin-top:12px;">
+    <table id="results-table">
+      <thead><tr><th>Name</th><th>Rating</th><th>Category</th><th>Phone</th><th>Address</th><th>CID</th><th>Query</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Log -->
+<div class="card">
+  <h2>📝 Activity Log</h2>
+  <div class="log" id="log"></div>
+</div>
+
+</div>
+
+<script>
+const API = '';  // same origin (nginx proxies /api → backend)
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + el.textContent;
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(`${API}${path}`, { headers: {'Content-Type': 'application/json'}, ...opts });
+  return r.json();
+}
+
+async function savePat() {
+  const pat = document.getElementById('pat').value.trim();
+  if (!pat) return;
+  const d = await api('/api/config', { method: 'POST', body: JSON.stringify({ pat }) });
+  document.getElementById('pat-status').textContent = d.status === 'ok' ? ' ✅ Valid' : ` ❌ ${d.message}`;
+  log(d.status === 'ok' ? 'PAT validated' : `PAT error: ${d.message}`);
+  if (d.status === 'ok') refreshWorkflows();
+}
+
+async function startWorkflows() {
+  const count = parseInt(document.getElementById('wf-count').value);
+  log(`Starting ${count} workflow(s)...`);
+  const d = await api('/api/workflows/start', { method: 'POST', body: JSON.stringify({ count }) });
+  log(`Triggered: ${d.triggered || 0}`);
+  setTimeout(refreshWorkflows, 5000);
+}
+
+async function stopWorkflows() {
+  log('Stopping all workflows...');
+  const d = await api('/api/workflows/stop', { method: 'POST' });
+  log(`Cancelled: ${d.cancelled || 0}`);
+  setTimeout(refreshWorkflows, 3000);
+}
+
+async function refreshWorkflows() {
+  const d = await api('/api/workflows');
+  const el = document.getElementById('scrapers-list');
+  if (d.error) { el.innerHTML = `<em>${d.error}</em>`; return; }
+  if (!d.scrapers?.length) { el.innerHTML = '<em>No active scrapers</em>'; return; }
+  el.innerHTML = d.scrapers.map(s =>
+    `<div style="padding:4px 0;font-size:13px;">
+      <span class="status-badge status-running">${s.status}</span>
+      Run #${s.run_id} — ${s.tunnel_url || 'waiting for tunnel...'}
+    </div>`
+  ).join('');
+  log(`Refreshed: ${d.active} active scraper(s)`);
+}
+
+async function generateQueries() {
+  const cities = document.getElementById('cities').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const businesses = document.getElementById('businesses').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const d = await api('/api/queries/generate', { method: 'POST', body: JSON.stringify({ cities, businesses }) });
+  document.getElementById('gen-status').textContent = ` ✅ ${d.generated} queries queued`;
+  log(`Generated ${d.generated} queries`);
+  refreshStatus();
+}
+
+async function refreshStatus() {
+  const d = await api('/api/pipeline/status');
+  document.getElementById('s-queries').textContent = d.query_queue || 0;
+  document.getElementById('s-active').textContent = d.active_jobs || 0;
+  document.getElementById('s-results').textContent = d.result_queue || 0;
+  document.getElementById('s-scrapers').textContent = d.active_scrapers || 0;
+  document.getElementById('s-inserted').textContent = d.total_inserted || 0;
+}
+
+async function loadResults() {
+  const d = await api('/api/results?limit=100');
+  document.getElementById('results-count').textContent = ` (${d.total} total)`;
+  const tbody = document.querySelector('#results-table tbody');
+  tbody.innerHTML = (d.results || []).map(r =>
+    `<tr><td>${r.name}</td><td>${r.rating}</td><td>${r.category}</td><td>${r.phone}</td><td>${r.address?.slice(0,40)}</td><td>${r.cid}</td><td>${r.query}</td></tr>`
+  ).join('');
+}
+
+// Auto-refresh status every 10s
+setInterval(refreshStatus, 10000);
+refreshStatus();
+</script>
+</body>
+</html>
