@@ -371,10 +371,11 @@ async function loadQueryResults() {
   const category = document.getElementById('r-category').value;
   const min_rating = document.getElementById('r-rating').value || 0;
   const phone_only = document.getElementById('r-phone').checked;
+  const no_phone = document.getElementById('r-no-phone').checked;
   const offset = (resultsPage - 1) * RESULTS_PER_PAGE;
 
   const params = new URLSearchParams({
-    limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only,
+    limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only, no_phone,
     query: selectedQuery
   });
 

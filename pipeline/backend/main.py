@@ -330,6 +330,7 @@ def get_results(
     min_rating: float = 0,
     min_reviews: int = 0,
     phone_only: bool = False,
+    no_phone: bool = False,
     db: Session = Depends(get_db)
 ):
     q = db.query(Business)
@@ -354,6 +355,8 @@ def get_results(
         q = q.filter(Business.review_count >= min_reviews)
     if phone_only:
         q = q.filter(Business.phone != "", Business.phone.isnot(None))
+    if no_phone:
+        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
 
     total = q.count()
     rows = q.order_by(Business.rating.desc().nulls_last()).offset(offset).limit(limit).all()
