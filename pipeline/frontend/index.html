@@ -4,308 +4,176 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Maps Scraper Pipeline</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #0f1724; color: #e2e8f0; min-height: 100vh; }
-.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
-h1 { font-size: 24px; margin-bottom: 20px; color: #fff; }
-.card { background: #1a2332; border: 1px solid #2d3748; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
-.card h2 { font-size: 15px; margin-bottom: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
-label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 4px; }
-input, textarea, select { width: 100%; padding: 8px 12px; border: 1px solid #374151; border-radius: 6px; font-size: 14px; margin-bottom: 10px; background: #0f1724; color: #e2e8f0; }
-select { max-height: 200px; }
-button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; color: #fff; margin-right: 6px; margin-bottom: 6px; }
-.btn-blue { background: #1d8def; }
-.btn-green { background: #10b981; }
-.btn-red { background: #ef4444; }
-.btn-orange { background: #f59e0b; }
-.btn-purple { background: #8b5cf6; }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-.stat { text-align: center; padding: 12px 8px; background: #0f1724; border: 1px solid #2d3748; border-radius: 8px; }
-.stat .num { font-size: 26px; font-weight: bold; color: #1d8def; }
-.stat .lbl { font-size: 11px; color: #64748b; margin-top: 4px; }
-.tabs { display: flex; gap: 0; margin-bottom: 16px; }
-.tab { padding: 8px 16px; border: 1px solid #374151; cursor: pointer; font-size: 13px; color: #94a3b8; background: #0f1724; }
-.tab:first-child { border-radius: 6px 0 0 6px; }
-.tab:last-child { border-radius: 0 6px 6px 0; }
-.tab.active { background: #1d8def; color: #fff; border-color: #1d8def; }
-.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
-th, td { padding: 6px 8px; text-align: left; border-bottom: 1px solid #2d3748; }
-th { color: #64748b; font-weight: 600; }
-td { color: #cbd5e1; }
-.tag { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #1e3a5f; color: #7dd3fc; }
-#results-section { display: none; }
-</style>
+<link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="container">
-<h1>🗺️ Maps Scraper Pipeline</h1>
 
-<!-- Config -->
-<div class="card">
-  <h2>⚙️ Configuration</h2>
-  <label>GitHub PAT Token</label>
-  <input type="password" id="pat" placeholder="ghp_xxxxxxxxxxxx">
-  <button class="btn-blue" onclick="savePat()">Save & Validate</button>
-  <span id="pat-status"></span>
+<!-- Mobile Header -->
+<div class="mobile-header">
+  <h1 style="font-size:16px;color:var(--primary);display:flex;align-items:center;gap:6px;" id="mobile-logo"></h1>
+  <button class="btn btn-outline" onclick="toggleSidebar()" id="menu-btn"></button>
 </div>
 
-<!-- Pipeline Status -->
-<div class="card">
-  <h2>📊 Pipeline Status</h2>
-  <div class="stats">
-    <div class="stat"><div class="num" id="s-scrapers">0</div><div class="lbl">Active Scrapers</div></div>
-    <div class="stat"><div class="num" id="s-queries">0</div><div class="lbl">Query Queue</div></div>
-    <div class="stat"><div class="num" id="s-active">0</div><div class="lbl">Active Jobs</div></div>
-    <div class="stat"><div class="num" id="s-results">0</div><div class="lbl">Result Queue</div></div>
-    <div class="stat"><div class="num" id="s-inserted">0</div><div class="lbl">DB Inserted</div></div>
-  </div>
-</div>
-
-<!-- Workflows -->
-<div class="card">
-  <h2>🚀 Scraper Workflows</h2>
-  <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap;">
-    <label style="margin:0; width:auto;">Count:</label>
-    <input type="number" id="wf-count" value="2" min="1" max="10" style="width:60px;">
-    <button class="btn-green" onclick="startWorkflows()">Start</button>
-    <button class="btn-red" onclick="stopWorkflows()">Stop All</button>
-    <button class="btn-orange" onclick="refreshWorkflows()">Refresh</button>
-  </div>
-  <div id="scrapers-list" style="font-size:12px;color:#94a3b8;"></div>
-</div>
-
-<!-- Query Generator -->
-<div class="card">
-  <h2>🔍 Query Generator</h2>
-
-  <div class="tabs">
-    <div class="tab active" data-mode="one_biz_all_loc" onclick="setMode(this)">1 Business × All Locations</div>
-    <div class="tab" data-mode="one_loc_all_biz" onclick="setMode(this)">1 Location × All Businesses</div>
-    <div class="tab" data-mode="all_biz_all_loc" onclick="setMode(this)">All × All</div>
-  </div>
-
-  <div class="grid-2">
-    <div>
-      <label>Country</label>
-      <select id="country" onchange="loadCities()">
-        <option value="">Loading...</option>
-      </select>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <h1 id="logo-text"></h1>
     </div>
-    <div>
-      <label>Modifier</label>
-      <select id="modifier">
-        <option value="in">in</option>
-        <option value="near">near</option>
-      </select>
-    </div>
-  </div>
+    <nav id="nav"></nav>
+  </aside>
 
-  <div class="grid-2">
-    <div id="biz-section">
-      <label>Business Categories <span id="biz-count"></span></label>
-      <select id="businesses" multiple size="8">
-        <option>Loading...</option>
-      </select>
-      <input type="text" id="biz-filter" placeholder="Filter categories..." oninput="filterSelect('businesses', this.value)">
-    </div>
-    <div id="loc-section">
-      <label>Locations/Cities <span id="loc-count"></span></label>
-      <select id="locations" multiple size="8">
-        <option>Select a country first</option>
-      </select>
-      <input type="text" id="loc-filter" placeholder="Filter locations..." oninput="filterSelect('locations', this.value)">
-      <button class="btn-purple" onclick="selectAll('locations')" style="margin-top:4px;">Select All</button>
-    </div>
-  </div>
+  <!-- Main Content -->
+  <main class="main">
 
-  <div style="margin-top:12px;">
-    <button class="btn-blue" onclick="generateQueries()">Generate & Queue</button>
-    <span id="gen-status"></span>
-  </div>
+    <!-- Page: Dashboard -->
+    <div class="page active" id="page-dashboard">
+      <div class="page-header">
+        <h2>Dashboard</h2>
+        <p>Pipeline overview and real-time metrics</p>
+      </div>
+      <div class="stats-grid" id="stats-grid"></div>
+      <div class="card" style="margin-top:16px;">
+        <div class="card-title" id="scrapers-title"></div>
+        <div id="scrapers-list"></div>
+      </div>
+    </div>
+
+    <!-- Page: Scrapers -->
+    <div class="page" id="page-scrapers">
+      <div class="page-header">
+        <h2>Scraper Workflows</h2>
+        <p>Start, stop, and manage GitHub Actions scraper instances</p>
+      </div>
+      <div class="card">
+        <div class="card-title" id="wf-title"></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+          <div class="input-group" style="margin:0;width:80px;">
+            <label>Count</label>
+            <input type="number" class="input" id="wf-count" value="2" min="1" max="10">
+          </div>
+          <button class="btn btn-success" id="btn-start" onclick="startWorkflows()"></button>
+          <button class="btn btn-danger" id="btn-stop" onclick="stopWorkflows()"></button>
+          <button class="btn btn-outline" id="btn-refresh-wf" onclick="refreshWorkflows()"></button>
+        </div>
+        <div id="wf-scrapers-list"></div>
+      </div>
+    </div>
+
+    <!-- Page: Query Generator -->
+    <div class="page" id="page-queries">
+      <div class="page-header">
+        <h2>Query Generator</h2>
+        <p>Generate location-based search queries for the pipeline</p>
+      </div>
+
+      <!-- Stepper -->
+      <div class="stepper" id="query-stepper"></div>
+
+      <!-- Step 1: Mode -->
+      <div class="card query-step" id="qstep-1">
+        <div class="card-title" id="mode-title"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="mode-buttons"></div>
+      </div>
+
+      <!-- Step 2: Select data -->
+      <div class="card query-step" id="qstep-2" style="display:none;">
+        <div class="grid-2">
+          <div>
+            <div class="card-title" id="biz-title"></div>
+            <input type="text" class="input" placeholder="Filter categories..." oninput="filterList('businesses', this.value)">
+            <select class="input" id="businesses" multiple size="8"></select>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px;" id="biz-count"></div>
+          </div>
+          <div>
+            <div class="card-title" id="loc-title"></div>
+            <div class="grid-2" style="gap:8px;margin-bottom:8px;">
+              <select class="input" id="country" onchange="loadCities()" style="margin:0;"></select>
+              <select class="input" id="modifier" style="margin:0;">
+                <option value="in">in</option>
+                <option value="near">near</option>
+              </select>
+            </div>
+            <input type="text" class="input" placeholder="Filter cities..." oninput="filterList('locations', this.value)">
+            <select class="input" id="locations" multiple size="8"></select>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;">
+              <span style="font-size:12px;color:var(--text-muted);" id="loc-count"></span>
+              <button class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="selectAllLocs()">Select All</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3: Generate -->
+      <div class="card query-step" id="qstep-3" style="display:none;">
+        <div id="gen-preview"></div>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:12px;">
+          <button class="btn btn-primary" id="btn-generate" onclick="generateQueries()"></button>
+          <span id="gen-status"></span>
+        </div>
+      </div>
+
+      <!-- Step navigation -->
+      <div style="display:flex;gap:8px;margin-top:12px;" id="step-nav"></div>
+    </div>
+
+    <!-- Page: Results -->
+    <div class="page" id="page-results">
+      <div class="page-header">
+        <h2>Scraped Data</h2>
+        <p>Browse and filter results stored in the database</p>
+      </div>
+      <div class="card">
+        <div class="card-title" id="filter-title"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          <input type="text" class="input" id="r-search" placeholder="Search name or address..." style="width:200px;">
+          <input type="text" class="input" id="r-city" placeholder="City" style="width:120px;">
+          <input type="text" class="input" id="r-category" placeholder="Category" style="width:130px;">
+          <input type="number" class="input" id="r-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-phone"> Phone only</label>
+          <button class="btn btn-primary" id="btn-search" onclick="loadResults()"></button>
+        </div>
+        <div id="results-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr></thead>
+            <tbody id="results-tbody"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="pagination"></div>
+      </div>
+    </div>
+
+    <!-- Page: Settings -->
+    <div class="page" id="page-settings">
+      <div class="page-header">
+        <h2>Settings</h2>
+        <p>Configure GitHub PAT and pipeline settings</p>
+      </div>
+      <div class="card">
+        <div class="card-title" id="pat-title"></div>
+        <div class="input-group">
+          <label>GitHub Personal Access Token</label>
+          <input type="password" class="input" id="pat" placeholder="ghp_xxxxxxxxxxxx">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-primary" id="btn-save-pat" onclick="savePat()"></button>
+          <span id="pat-status"></span>
+        </div>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);">
+          <div class="card-title" id="tunnel-title"></div>
+          <div id="tunnel-info" style="font-size:13px;color:var(--text-secondary);"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
 </div>
 
-<!-- Results -->
-<div class="card">
-  <h2>📋 Scraped Results (from Database)</h2>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-    <input type="text" id="r-search" placeholder="Search name/address..." style="width:200px;">
-    <input type="text" id="r-city" placeholder="City" style="width:120px;">
-    <input type="text" id="r-category" placeholder="Category" style="width:120px;">
-    <input type="number" id="r-rating" placeholder="Min rating" style="width:100px;" step="0.5">
-    <button class="btn-blue" onclick="loadResults()">Search</button>
-  </div>
-  <div id="results-count" style="font-size:12px;color:#64748b;margin-bottom:8px;"></div>
-  <div style="overflow-x:auto;">
-    <table id="results-table">
-      <thead><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</div>
+<!-- Toast container -->
+<div id="toast-container"></div>
 
-</div>
-
-<script>
-const API = '';
-let currentMode = 'one_biz_all_loc';
-let allCategories = [];
-let allCities = [];
-
-// Init
-(async () => {
-  await loadConfig();
-  await loadCategories();
-  await loadCountries();
-  refreshStatus();
-  refreshWorkflows();
-  setInterval(refreshStatus, 8000);
-})();
-
-async function loadConfig() {
-  const d = await api('/api/config');
-  if (d.pat_set) {
-    document.getElementById('pat').value = '';
-    document.getElementById('pat').placeholder = d.pat_preview || 'Token saved ✅';
-    document.getElementById('pat-status').textContent = ' ✅ Token loaded from DB';
-  }
-}
-
-function setMode(el) {
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  currentMode = el.dataset.mode;
-}
-
-async function api(path, opts = {}) {
-  try {
-    const r = await fetch(`${API}${path}`, { headers: {'Content-Type':'application/json'}, ...opts });
-    if (!r.ok) return { error: `HTTP ${r.status}` };
-    return await r.json();
-  } catch(e) {
-    console.error(`API ${path} failed:`, e);
-    return { error: e.message };
-  }
-}
-
-async function savePat() {
-  const pat = document.getElementById('pat').value.trim();
-  const d = await api('/api/config', { method:'POST', body: JSON.stringify({pat}) });
-  document.getElementById('pat-status').textContent = d.status === 'ok' ? ' ✅' : ` ❌ ${d.message}`;
-}
-
-async function loadCategories() {
-  const d = await api('/api/categories');
-  allCategories = d.categories || [];
-  const sel = document.getElementById('businesses');
-  sel.innerHTML = allCategories.map(c => `<option value="${c}">${c}</option>`).join('');
-  document.getElementById('biz-count').textContent = `(${allCategories.length})`;
-}
-
-async function loadCountries() {
-  try {
-    const d = await api('/api/countries');
-    const sel = document.getElementById('country');
-    if (d.countries && d.countries.length) {
-      sel.innerHTML = '<option value="">Select country...</option>' +
-        d.countries.map(c => `<option value="${c}">${c}</option>`).join('');
-    } else {
-      sel.innerHTML = '<option value="">No countries loaded</option>';
-    }
-  } catch(e) {
-    console.error('loadCountries failed:', e);
-    document.getElementById('country').innerHTML = '<option value="">Error loading countries</option>';
-    // Retry after 2s
-    setTimeout(loadCountries, 2000);
-  }
-}
-
-async function loadCities() {
-  const country = document.getElementById('country').value;
-  if (!country) return;
-  const sel = document.getElementById('locations');
-  sel.innerHTML = '<option>Loading...</option>';
-  const d = await api(`/api/cities?country=${encodeURIComponent(country)}`);
-  allCities = (d.cities || []).map(c => `${c.district}, ${c.state}`);
-  sel.innerHTML = allCities.map(c => `<option value="${c}">${c}</option>`).join('');
-  document.getElementById('loc-count').textContent = `(${allCities.length})`;
-}
-
-function filterSelect(id, filter) {
-  const sel = document.getElementById(id);
-  const source = id === 'businesses' ? allCategories : allCities;
-  const f = filter.toLowerCase();
-  const filtered = f ? source.filter(s => s.toLowerCase().includes(f)) : source;
-  sel.innerHTML = filtered.map(c => `<option value="${c}">${c}</option>`).join('');
-}
-
-function selectAll(id) {
-  const sel = document.getElementById(id);
-  Array.from(sel.options).forEach(o => o.selected = true);
-}
-
-async function generateQueries() {
-  const businesses = Array.from(document.getElementById('businesses').selectedOptions).map(o => o.value);
-  const locations = Array.from(document.getElementById('locations').selectedOptions).map(o => o.value);
-  const modifier = document.getElementById('modifier').value;
-
-  if (!businesses.length || !locations.length) {
-    document.getElementById('gen-status').textContent = ' ❌ Select businesses AND locations';
-    return;
-  }
-
-  const d = await api('/api/queries/generate', {
-    method: 'POST',
-    body: JSON.stringify({ mode: currentMode, businesses, locations, modifier })
-  });
-  document.getElementById('gen-status').textContent = ` ✅ ${d.generated} queries queued`;
-  refreshStatus();
-}
-
-async function refreshStatus() {
-  const d = await api('/api/pipeline/status');
-  document.getElementById('s-queries').textContent = d.query_queue || 0;
-  document.getElementById('s-active').textContent = d.active_jobs || 0;
-  document.getElementById('s-results').textContent = d.result_queue || 0;
-  document.getElementById('s-scrapers').textContent = d.active_scrapers || 0;
-  document.getElementById('s-inserted').textContent = d.total_inserted || 0;
-}
-
-async function startWorkflows() {
-  const count = parseInt(document.getElementById('wf-count').value);
-  await api('/api/workflows/start', { method:'POST', body: JSON.stringify({count}) });
-  setTimeout(refreshWorkflows, 5000);
-}
-
-async function stopWorkflows() {
-  await api('/api/workflows/stop', { method:'POST' });
-  setTimeout(refreshWorkflows, 3000);
-}
-
-async function refreshWorkflows() {
-  const d = await api('/api/scrapers');
-  const el = document.getElementById('scrapers-list');
-  if (!d.scrapers?.length) { el.innerHTML = '<em>No active scrapers</em>'; return; }
-  el.innerHTML = d.scrapers.map(s =>
-    `<div style="padding:3px 0;"><span class="tag">${s.run_id}</span> ${s.tunnel_url}</div>`
-  ).join('');
-}
-
-async function loadResults() {
-  const search = document.getElementById('r-search').value;
-  const city = document.getElementById('r-city').value;
-  const category = document.getElementById('r-category').value;
-  const min_rating = document.getElementById('r-rating').value || 0;
-  const params = new URLSearchParams({limit:'100', search, city, category, min_rating});
-  const d = await api(`/api/results?${params}`);
-  document.getElementById('results-count').textContent = `${d.total} results found`;
-  const tbody = document.querySelector('#results-table tbody');
-  tbody.innerHTML = (d.results || []).map(r =>
-    `<tr><td>${r.name}</td><td>${r.rating||'-'}</td><td>${r.review_count||0}</td><td>${r.category||'-'}</td><td>${r.phone||'-'}</td><td>${r.city||'-'}</td><td style="font-size:11px;">${r.cid||'-'}</td></tr>`
-  ).join('');
-}
-</script>
+<script src="icons.js"></script>
+<script src="app.js"></script>
 </body>
 </html>
