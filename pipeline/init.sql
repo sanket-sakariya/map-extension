@@ -1,22 +1,40 @@
+-- Optimized schema for fast lookups on any field
+
 CREATE TABLE IF NOT EXISTS businesses (
     id SERIAL PRIMARY KEY,
+
+    -- Core identity
     name TEXT NOT NULL,
-    rating TEXT,
-    review_count TEXT,
-    category TEXT,
-    address TEXT,
-    phone TEXT,
-    plus_code TEXT,
-    website TEXT,
-    hours JSONB,
-    current_status TEXT,
-    identifies_as TEXT,
     cid TEXT,
     place_id TEXT,
-    maps_url TEXT,
+
+    -- Business info
+    category TEXT,
+    rating NUMERIC(2,1),
+    review_count INTEGER DEFAULT 0,
+    phone TEXT,
+    website TEXT,
+    address TEXT,
+    city TEXT,
+    state TEXT,
+    plus_code TEXT,
+
+    -- Status
+    current_status TEXT,
+    identifies_as TEXT,
+
+    -- Structured data (JSONB for flexible querying)
+    hours JSONB,
     reviews JSONB,
+
+    -- URLs
+    maps_url TEXT,
+
+    -- Pipeline metadata
     query TEXT,
     scraped_at TIMESTAMP DEFAULT NOW(),
+
+    -- Prevent duplicates: same CID for same query
     UNIQUE(cid, query)
 );
 
@@ -35,6 +53,37 @@ CREATE TABLE IF NOT EXISTS scrape_jobs (
     completed_at TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_businesses_cid ON businesses(cid);
-CREATE INDEX IF NOT EXISTS idx_businesses_query ON businesses(query);
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_status ON scrape_jobs(status);
+-- ═══════════════════════════════════════════════════════════════════
+-- INDEXES: Cover all common query patterns
+-- ═══════════════════════════════════════════════════════════════════
+
+-- Identity lookups (exact match)
+CREATE INDEX IF NOT EXISTS idx_biz_cid ON businesses(cid);
+CREATE INDEX IF NOT EXISTS idx_biz_place_id ON businesses(place_id);
+CREATE INDEX IF NOT EXISTS idx_biz_phone ON businesses(phone);
+
+-- Category/geo filtering (most common queries)
+CREATE INDEX IF NOT EXISTS idx_biz_category ON businesses(category);
+CREATE INDEX IF NOT EXISTS idx_biz_city ON businesses(city);
+CREATE INDEX IF NOT EXISTS idx_biz_state ON businesses(state);
+CREATE INDEX IF NOT EXISTS idx_biz_city_category ON businesses(city, category);
+
+-- Rating sorting/filtering
+CREATE INDEX IF NOT EXISTS idx_biz_rating ON businesses(rating DESC NULLS LAST);
+CREATE INDEX IF NOT EXISTS idx_biz_review_count ON businesses(review_count DESC NULLS LAST);
+
+-- Query tracking
+CREATE INDEX IF NOT EXISTS idx_biz_query ON businesses(query);
+CREATE INDEX IF NOT EXISTS idx_biz_scraped_at ON businesses(scraped_at DESC);
+
+-- Full-text search on name + address + category
+CREATE INDEX IF NOT EXISTS idx_biz_fts ON businesses
+    USING GIN (to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')));
+
+-- JSONB indexes for querying inside hours/reviews
+CREATE INDEX IF NOT EXISTS idx_biz_hours ON businesses USING GIN (hours);
+CREATE INDEX IF NOT EXISTS idx_biz_reviews ON businesses USING GIN (reviews);
+
+-- Scrape jobs
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON scrape_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_created ON scrape_jobs(created_at DESC);

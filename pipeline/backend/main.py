@@ -138,20 +138,67 @@ def pipeline_status():
 
 
 @app.get("/api/results")
-def get_results(limit: int = 50, offset: int = 0, query: str = "", db: Session = Depends(get_db)):
+def get_results(
+    limit: int = 50,
+    offset: int = 0,
+    search: str = "",
+    query: str = "",
+    city: str = "",
+    state: str = "",
+    category: str = "",
+    min_rating: float = 0,
+    min_reviews: int = 0,
+    phone_only: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Fast filtered search across all businesses.
+    - search: full-text search on name+address+category
+    - query: filter by scrape query
+    - city/state/category: exact match filters
+    - min_rating/min_reviews: numeric filters
+    - phone_only: only businesses with phone numbers
+    """
+    from sqlalchemy import text as sql_text, func as sql_func
+
     q = db.query(Business)
+
+    # Full-text search (uses GIN index)
+    if search:
+        q = q.filter(sql_text(
+            "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
+            "@@ plainto_tsquery('english', :search)"
+        ).bindparams(search=search))
+
     if query:
         q = q.filter(Business.query.ilike(f"%{query}%"))
+    if city:
+        q = q.filter(Business.city.ilike(f"%{city}%"))
+    if state:
+        q = q.filter(Business.state.ilike(f"%{state}%"))
+    if category:
+        q = q.filter(Business.category.ilike(f"%{category}%"))
+    if min_rating > 0:
+        q = q.filter(Business.rating >= min_rating)
+    if min_reviews > 0:
+        q = q.filter(Business.review_count >= min_reviews)
+    if phone_only:
+        q = q.filter(Business.phone != "", Business.phone.isnot(None))
+
     total = q.count()
-    rows = q.order_by(Business.scraped_at.desc()).offset(offset).limit(limit).all()
+    rows = q.order_by(Business.rating.desc().nulls_last()).offset(offset).limit(limit).all()
+
     return {
         "total": total,
+        "limit": limit,
+        "offset": offset,
         "results": [
             {
-                "id": b.id, "name": b.name, "rating": b.rating,
+                "id": b.id, "name": b.name, "rating": float(b.rating) if b.rating else None,
                 "review_count": b.review_count, "category": b.category,
-                "address": b.address, "phone": b.phone, "cid": b.cid,
-                "place_id": b.place_id, "website": b.website,
+                "address": b.address, "city": b.city, "state": b.state,
+                "phone": b.phone, "website": b.website, "cid": b.cid,
+                "place_id": b.place_id, "maps_url": b.maps_url,
                 "query": b.query, "scraped_at": str(b.scraped_at)
             }
             for b in rows

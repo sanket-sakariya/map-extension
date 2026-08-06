@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, TIMESTAMP, BigInteger
+from sqlalchemy import Column, Integer, Text, TIMESTAMP, BigInteger, Numeric
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from database import Base
@@ -8,20 +8,22 @@ class Business(Base):
     __tablename__ = "businesses"
     id = Column(Integer, primary_key=True)
     name = Column(Text, nullable=False)
-    rating = Column(Text)
-    review_count = Column(Text)
-    category = Column(Text)
-    address = Column(Text)
-    phone = Column(Text)
-    plus_code = Column(Text)
-    website = Column(Text)
-    hours = Column(JSONB)
-    current_status = Column(Text)
-    identifies_as = Column(Text)
     cid = Column(Text)
     place_id = Column(Text)
-    maps_url = Column(Text)
+    category = Column(Text)
+    rating = Column(Numeric(2, 1))
+    review_count = Column(Integer, default=0)
+    phone = Column(Text)
+    website = Column(Text)
+    address = Column(Text)
+    city = Column(Text)
+    state = Column(Text)
+    plus_code = Column(Text)
+    current_status = Column(Text)
+    identifies_as = Column(Text)
+    hours = Column(JSONB)
     reviews = Column(JSONB)
+    maps_url = Column(Text)
     query = Column(Text)
     scraped_at = Column(TIMESTAMP, server_default=func.now())
 
