@@ -1,0 +1,304 @@
+name: Maps Scraper VNC
+
+on:
+  workflow_dispatch:
+
+env:
+  DISPLAY: ":1"
+  VNC_PORT: 5901
+  NOVNC_PORT: 6080
+  VNC_PASSWORD: "botxbyte123"
+  SCRAPER_PORT: 8815
+  PROJECT_DIR: "/home/runner/map-extension"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Clone map-extension code
+        run: |
+          git clone https://github.com/sanket-sakariya/map-extension.git map-extension
+          rm -rf "$PROJECT_DIR"
+          mv map-extension "$PROJECT_DIR"
+          echo "✅ map-extension ready at $PROJECT_DIR"
+          ls -la "$PROJECT_DIR"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Optimize APT mirror
+        timeout-minutes: 3
+        run: |
+          sudo systemctl stop unattended-upgrades 2>/dev/null || true
+          sudo killall -9 unattended-upgrades 2>/dev/null || true
+
+          cat << 'EOF' | sudo tee /etc/apt/apt.conf.d/99ci-network >/dev/null
+          Acquire::Retries "6";
+          Acquire::http::Timeout "15";
+          Acquire::https::Timeout "15";
+          Acquire::ForceIPv4 "true";
+          EOF
+
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list.d/ubuntu.sources
+            sudo sed -i 's|https://azure.archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list.d/ubuntu.sources
+          fi
+          if [ -f /etc/apt/sources.list ]; then
+            sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list
+            sudo sed -i 's|https://azure.archive.ubuntu.com/ubuntu|mirror://mirrors.ubuntu.com/mirrors.txt|g' /etc/apt/sources.list
+          fi
+
+          sudo apt-get -o Acquire::Retries=6 update -q
+          echo "✅ APT optimization complete"
+
+      - name: Install Desktop Environment (XFCE + VNC)
+        timeout-minutes: 18
+        run: |
+          sudo systemctl stop unattended-upgrades 2>/dev/null || true
+          sudo killall -9 unattended-upgrades 2>/dev/null || true
+
+          for i in $(seq 1 12); do
+            if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then break; fi
+            echo "Waiting for dpkg lock... ($i/12)"; sleep 5
+          done
+
+          mkdir -p ~/cached-debs
+
+          # Parallel downloads
+          (wget -q -O ~/cached-debs/turbovnc_2.2.5_amd64.deb \
+            https://phoenixnap.dl.sourceforge.net/project/turbovnc/2.2.5/turbovnc_2.2.5_amd64.deb && echo "✅ TurboVNC downloaded") &
+          PID_VNC=$!
+          (cd ~ && git clone --depth 1 https://github.com/novnc/noVNC.git && \
+            cd noVNC && git clone --depth 1 https://github.com/novnc/websockify.git && echo "✅ noVNC cloned") &
+          PID_NOVNC=$!
+
+          # Install XFCE + chromium dependencies
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
+            xfce4 xfce4-terminal dbus-x11 x11-utils x11-xserver-utils xfonts-base net-tools \
+            libnss3 libatk-bridge2.0-0 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 \
+            libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libcups2 libdrm2 libxshmfence1
+
+          echo "✅ XFCE + browser deps installed"
+
+          wait $PID_VNC && sudo dpkg -i ~/cached-debs/turbovnc_2.2.5_amd64.deb
+          echo "✅ TurboVNC installed"
+
+          wait $PID_NOVNC
+          echo "✅ noVNC ready"
+
+      - name: Configure VNC Server
+        run: |
+          export PATH=$PATH:/opt/TurboVNC/bin
+          mkdir -p ~/.vnc
+          echo "${VNC_PASSWORD}" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+
+          cat > ~/.vnc/xstartup.turbovnc << 'EOF'
+          #!/bin/bash
+          export NO_AT_BRIDGE=1
+          export SESSION_MANAGER=""
+          dbus-launch /usr/bin/startxfce4 &
+          EOF
+          chmod +x ~/.vnc/xstartup.turbovnc
+          echo "✅ VNC configured"
+
+      - name: Start VNC Server
+        run: |
+          export PATH=$PATH:/opt/TurboVNC/bin
+          vncserver :1 -geometry 1920x1080 -depth 24 -rfbport $VNC_PORT 2>&1 | tee /tmp/vnc-start.log
+
+          for i in $(seq 1 15); do
+            if pgrep -f "Xvnc.*:1" > /dev/null; then
+              echo "✅ TurboVNC started on port $VNC_PORT"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ Failed to start VNC server"; cat /tmp/vnc-start.log; exit 1
+
+      - name: Start noVNC (Web VNC)
+        run: |
+          cd ~/noVNC
+          ./utils/novnc_proxy --vnc localhost:$VNC_PORT --listen $NOVNC_PORT > /tmp/novnc.log 2>&1 &
+
+          for i in $(seq 1 10); do
+            if netstat -tuln | grep :$NOVNC_PORT > /dev/null; then
+              echo "✅ noVNC started on port $NOVNC_PORT"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "❌ noVNC failed"; cat /tmp/novnc.log; exit 1
+
+      - name: Install cloudflared
+        run: |
+          wget -q -O /tmp/cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+          cloudflared --version
+          echo "✅ cloudflared installed"
+
+      - name: Start Cloudflare Tunnel (VNC)
+        id: vnc_tunnel
+        run: |
+          cloudflared tunnel --no-autoupdate --url http://localhost:$NOVNC_PORT > /tmp/vnc-tunnel.log 2>&1 &
+
+          TUNNEL_URL=""
+          for i in $(seq 1 30); do
+            TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/vnc-tunnel.log | head -1)
+            if [ -n "$TUNNEL_URL" ]; then break; fi
+            sleep 2
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "❌ Failed to get VNC tunnel URL"; cat /tmp/vnc-tunnel.log; exit 1
+          fi
+
+          echo "tunnel_url=$TUNNEL_URL" >> $GITHUB_OUTPUT
+          echo "✅ VNC tunnel: $TUNNEL_URL"
+
+      - name: Start Cloudflare Tunnel (Scraper API)
+        id: scraper_tunnel
+        run: |
+          cloudflared tunnel --no-autoupdate --url http://localhost:$SCRAPER_PORT > /tmp/scraper-tunnel.log 2>&1 &
+
+          SCRAPER_TUNNEL_URL=""
+          for i in $(seq 1 30); do
+            SCRAPER_TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' /tmp/scraper-tunnel.log | head -1)
+            if [ -n "$SCRAPER_TUNNEL_URL" ]; then break; fi
+            sleep 2
+          done
+
+          if [ -z "$SCRAPER_TUNNEL_URL" ]; then
+            echo "❌ Failed to get scraper tunnel URL"; cat /tmp/scraper-tunnel.log; exit 1
+          fi
+
+          echo "scraper_tunnel_url=$SCRAPER_TUNNEL_URL" >> $GITHUB_OUTPUT
+          echo "✅ Scraper API tunnel: $SCRAPER_TUNNEL_URL"
+
+      - name: Setup vendored ungoogled-chromium
+        timeout-minutes: 5
+        run: |
+          cd "$PROJECT_DIR"
+          bash tools/setup_vendor.sh
+
+          test -x vendor/ungoogled-chromium/chrome \
+            || { echo "❌ vendor/ungoogled-chromium/chrome missing"; exit 1; }
+          echo "✅ Vendor setup complete"
+
+      - name: Start Maps Scraper API
+        run: |
+          export DISPLAY=:1
+          export NO_AT_BRIDGE=1
+          cd "$PROJECT_DIR"
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install --no-cache-dir -r requirements.txt
+          nohup python3 server.py > /tmp/maps-scraper.log 2>&1 &
+          SCRAPER_PID=$!
+          echo "  Scraper PID: $SCRAPER_PID"
+          sleep 5
+
+          if kill -0 $SCRAPER_PID 2>/dev/null; then
+            echo "✅ Maps Scraper API started (PID: $SCRAPER_PID, port: $SCRAPER_PORT)"
+          else
+            echo "❌ Scraper failed to start"; cat /tmp/maps-scraper.log; exit 1
+          fi
+
+      - name: Test scraper with sample query
+        run: |
+          sleep 5
+          RESPONSE=$(curl -s -X POST http://localhost:$SCRAPER_PORT/api/v1/health)
+          echo "Health: $RESPONSE"
+
+          echo "Testing with a sample query..."
+          RESPONSE=$(curl -s --max-time 120 -X POST http://localhost:$SCRAPER_PORT/api/v1/scrape \
+            -H "Content-Type: application/json" \
+            -d '{"query": "coffee shop Manhattan"}')
+
+          echo "$RESPONSE" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          if d.get('status') == 'success':
+              print(f'✅ Test passed! Scraped {d[\"total\"]} listings')
+              if d.get('results'):
+                  print(f'   First: {d[\"results\"][0].get(\"name\",\"?\")}')
+          else:
+              print(f'⚠️ Response: {json.dumps(d, indent=2)[:500]}')
+          "
+
+      - name: Display Connection Info
+        run: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║         🗺️  MAPS SCRAPER IS RUNNING! 🗺️                     ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
+          echo "🌐 VNC Access: ${{ steps.vnc_tunnel.outputs.tunnel_url }}/vnc.html"
+          echo "🔑 Password: botxbyte123"
+          echo ""
+          echo "🚀 Scraper API: ${{ steps.scraper_tunnel.outputs.scraper_tunnel_url }}"
+          echo ""
+          echo "📋 Usage:"
+          echo "   curl -X POST ${{ steps.scraper_tunnel.outputs.scraper_tunnel_url }}/api/v1/scrape \\"
+          echo "     -H 'Content-Type: application/json' \\"
+          echo "     -d '{\"query\": \"beauty parlour Rajkot\"}'"
+          echo ""
+          echo "📋 Response: {status, query, total, results: [{name, rating, phone, address, cid, placeId, ...}]}"
+          echo ""
+
+      - name: Keep Session Alive
+        run: |
+          export PATH=$PATH:/opt/TurboVNC/bin
+          set +e
+
+          while true; do
+            echo "🌐 VNC: ${{ steps.vnc_tunnel.outputs.tunnel_url }}/vnc.html"
+            echo "🚀 API: ${{ steps.scraper_tunnel.outputs.scraper_tunnel_url }}/api/v1/scrape"
+
+            # Restart VNC if died
+            if ! pgrep -f "Xvnc.*:1" > /dev/null; then
+              echo "❌ VNC stopped! Restarting..."
+              vncserver :1 -geometry 1920x1080 -depth 24 -rfbport $VNC_PORT
+              sleep 3
+            fi
+
+            # Restart tunnels if died
+            TUNNEL_COUNT=$(pgrep -cx "cloudflared")
+            if [ "$TUNNEL_COUNT" -lt 2 ]; then
+              echo "❌ Tunnel(s) stopped! Restarting..."
+              pkill -x cloudflared || true
+              sleep 2
+              cloudflared tunnel --no-autoupdate --url http://localhost:$NOVNC_PORT > /tmp/vnc-tunnel.log 2>&1 &
+              cloudflared tunnel --no-autoupdate --url http://localhost:$SCRAPER_PORT > /tmp/scraper-tunnel.log 2>&1 &
+              sleep 5
+            fi
+
+            # Restart scraper if died
+            if ! pgrep -f "server.py" > /dev/null; then
+              echo "⚠️ Scraper stopped! Restarting..."
+              export DISPLAY=:1
+              export NO_AT_BRIDGE=1
+              cd "$PROJECT_DIR"
+              source .venv/bin/activate
+              nohup python3 server.py > /tmp/maps-scraper.log 2>&1 &
+              sleep 3
+            fi
+
+            sleep 30
+          done
+
+      - name: Cleanup
+        if: always()
+        timeout-minutes: 1
+        run: |
+          export PATH=$PATH:/opt/TurboVNC/bin
+          pkill -f "server.py" || true
+          pkill -x cloudflared || true
+          vncserver -kill :1 || true
+          echo "✅ Cleanup complete"
