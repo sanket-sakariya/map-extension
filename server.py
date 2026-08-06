@@ -4,22 +4,15 @@ Flask API that:
 1. Receives a search query via POST /api/v1/scrape
 2. Launches ungoogled-chromium with the maps extension loaded
 3. Navigates to Google Maps, searches the query
-4. Triggers the extension content script to scrape all listings
+4. Collects all listing URLs, visits each one, extracts data
 5. Returns structured JSON
-
-Usage:
-  python3 server.py
-  POST http://localhost:8815/api/v1/scrape {"query": "beauty parlour Rajkot"}
 """
 
 import json
 import os
-import subprocess
-import sys
 import time
 import threading
-import tempfile
-import shutil
+import urllib.parse
 from pathlib import Path
 
 from flask import Flask, request, jsonify
@@ -35,21 +28,16 @@ app = Flask(__name__)
 PROJECT_DIR = Path(__file__).parent
 CHROMIUM_BIN = PROJECT_DIR / "vendor" / "ungoogled-chromium" / "chrome"
 CHROMEDRIVER_BIN = PROJECT_DIR / "vendor" / "ungoogled-chromium" / "chromedriver"
-EXTENSION_DIR = PROJECT_DIR  # The extension is in project root (manifest.json, content.js, etc.)
+EXTENSION_DIR = PROJECT_DIR
 
-# Lock to serialize browser sessions (one at a time)
 scrape_lock = threading.Lock()
 
 
 def create_driver():
-    """Launch ungoogled-chromium with the maps extension loaded."""
+    """Launch ungoogled-chromium."""
     opts = Options()
     opts.binary_location = str(CHROMIUM_BIN)
-
-    # Load our extension
     opts.add_argument(f"--load-extension={EXTENSION_DIR}")
-
-    # Standard headless-friendly flags
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--disable-gpu")
@@ -57,7 +45,6 @@ def create_driver():
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--lang=en-US")
 
-    # Use display if available (VNC), else headless
     display = os.environ.get("DISPLAY")
     if not display:
         opts.add_argument("--headless=new")
@@ -69,48 +56,20 @@ def create_driver():
     return driver
 
 
-def search_google_maps(driver, query):
-    """Navigate to Google Maps search results directly via URL."""
-    import urllib.parse
+def collect_listing_urls(driver, query):
+    """Phase 1: Navigate to search, scroll to load all, collect all listing hrefs."""
     encoded_query = urllib.parse.quote_plus(query)
     url = f"https://www.google.com/maps/search/{encoded_query}/"
     driver.get(url)
 
-    # Wait for results to load (listing cards appear)
     WebDriverWait(driver, 20).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "a.hfpxzc"))
     )
     time.sleep(2)
 
-
-def run_scraper_script(driver):
-    """
-    Inject and run the scraping logic directly via executeScript
-    (more reliable than messaging the extension in headless).
-    """
-    # Read our content.js scraping functions
-    content_js = (PROJECT_DIR / "content.js").read_text()
-
-    # We'll inject the core functions and call scrapeListings() directly
-    # Strip the chrome.runtime.onMessage listener and just define + call
-    inject_script = """
-    // --- Injected scraper functions ---
-    function waitForInject(selector, timeout = 4000) {
-      return new Promise((resolve) => {
-        const el = document.querySelector(selector);
-        if (el) return resolve(el);
-        const observer = new MutationObserver(() => {
-          const el = document.querySelector(selector);
-          if (el) { observer.disconnect(); resolve(el); }
-        });
-        observer.observe(document.body, { childList: true, subtree: true });
-        setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
-      });
-    }
-
-    function waitMs(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-    async function scrollToLoadAllInject() {
+    # Scroll to load all listings
+    scroll_script = """
+    async function scrollAll() {
       const feed = document.querySelector("div[role='feed']") ||
                    document.querySelector(".m6QErb.DxyBCb.kA9KIf.dS8AEf");
       if (!feed) return;
@@ -120,14 +79,36 @@ def run_scraper_script(driver):
         if (count === prevCount) sameStreak++;
         else { sameStreak = 0; prevCount = count; }
         feed.scrollTop = feed.scrollHeight;
-        await waitMs(800);
+        await new Promise(r => setTimeout(r, 800));
         if (document.querySelector(".HlvSq")) break;
       }
     }
+    return scrollAll();
+    """
+    driver.set_script_timeout(120)
+    driver.execute_async_script(f"""
+        const cb = arguments[arguments.length - 1];
+        (async () => {{ {scroll_script} }})().then(cb);
+    """)
 
-    function extractDetailInject() {
+    # Collect all hrefs
+    links = driver.find_elements(By.CSS_SELECTOR, "a.hfpxzc")
+    urls = []
+    for link in links:
+        href = link.get_attribute("href")
+        if href:
+            urls.append(href)
+    return urls
+
+
+def extract_listing_detail(driver):
+    """Phase 2: Extract data from a listing detail page."""
+    extract_script = """
+    function extract() {
       const txt = (sel) => document.querySelector(sel)?.textContent?.trim() || "";
       const name = txt("h1.DUwDvf");
+      if (!name) return null;
+
       const rating = txt(".F7nice span[aria-hidden='true']");
       const reviewCount = txt(".F7nice span[role='img'][aria-label*='reviews']") || txt(".F7nice .UY7F9");
       const category = txt("button.DkEaL");
@@ -145,6 +126,12 @@ def run_scraper_script(driver):
                      row.querySelector(".G8aQO")?.textContent?.trim();
         if (day) hours[day] = time || "";
       });
+
+      // Expand hours if collapsed
+      const hoursToggle = document.querySelector(".OMl5r.hH0dDd.jBYmhd");
+      if (hoursToggle && hoursToggle.getAttribute("aria-expanded") === "false") {
+        hoursToggle.click();
+      }
 
       const currentStatus = document.querySelector(".ZDu9vd span")?.textContent?.trim() || "";
       const identifiesAs = txt("div[data-item-id='place-info-links:'] .Io6YTe");
@@ -176,96 +163,59 @@ def run_scraper_script(driver):
         cid, placeId: googlePlaceId || placeId
       };
     }
-
-    async function scrapeAllInject() {
-      await scrollToLoadAllInject();
-      const totalLinks = document.querySelectorAll("a.hfpxzc").length;
-      if (!totalLinks) return { error: "No listings found", results: [] };
-
-      const results = [];
-      for (let i = 0; i < totalLinks; i++) {
-        const currentLinks = document.querySelectorAll("a.hfpxzc");
-        if (!currentLinks[i]) break;
-        currentLinks[i].scrollIntoView({ block: "center" });
-        await waitMs(100);
-        currentLinks[i].click();
-        const nameEl = await waitForInject("h1.DUwDvf", 5000);
-        if (!nameEl) {
-          const backBtn = document.querySelector("button[aria-label='Back']");
-          if (backBtn) { backBtn.click(); await waitMs(800); }
-          continue;
-        }
-        await waitMs(300);
-        const hoursToggle = document.querySelector(".OMl5r.hH0dDd.jBYmhd");
-        if (hoursToggle && hoursToggle.getAttribute("aria-expanded") === "false") {
-          hoursToggle.click();
-          await waitMs(300);
-        }
-        const data = extractDetailInject();
-        data._index = i + 1;
-        results.push(data);
-        const backBtn = document.querySelector("button[aria-label='Back']");
-        if (backBtn) {
-          backBtn.click();
-          await waitForInject("a.hfpxzc", 4000);
-          await waitMs(200);
-        }
-      }
-      return { results, total: totalLinks };
-    }
-
-    return scrapeAllInject();
+    return extract();
     """
-
-    # Execute as async — Selenium handles promises via execute_async_script
-    driver.set_script_timeout(600)  # 10 min max for large result sets
-    result = driver.execute_async_script(f"""
-        const callback = arguments[arguments.length - 1];
-        (async () => {{
-            {inject_script}
-        }})().then(callback).catch(e => callback({{error: e.message}}));
-    """)
-    return result
+    return driver.execute_script(extract_script)
 
 
 @app.route("/api/v1/scrape", methods=["POST"])
 def scrape():
-    """
-    POST /api/v1/scrape
-    Body: {"query": "beauty parlour Rajkot", "max_results": 20}
-    Returns: {"status": "success", "query": "...", "results": [...], "total": N}
-    """
     data = request.get_json(force=True)
     query = data.get("query", "").strip()
     if not query:
         return jsonify({"status": "error", "message": "Missing 'query' field"}), 400
 
     if not CHROMIUM_BIN.exists():
-        return jsonify({"status": "error", "message": "Chromium not found. Run tools/setup_vendor.sh first"}), 500
+        return jsonify({"status": "error", "message": "Chromium not found. Run tools/setup_vendor.sh"}), 500
 
-    # Serialize — one scrape at a time
     acquired = scrape_lock.acquire(timeout=5)
     if not acquired:
-        return jsonify({"status": "busy", "message": "Another scrape is in progress. Try again shortly."}), 429
+        return jsonify({"status": "busy", "message": "Another scrape in progress."}), 429
 
     driver = None
     try:
         driver = create_driver()
-        search_google_maps(driver, query)
-        result = run_scraper_script(driver)
 
-        if not result or result.get("error"):
-            return jsonify({
-                "status": "error",
-                "query": query,
-                "message": result.get("error", "Unknown error during scraping")
-            }), 500
+        # Phase 1: collect all listing URLs
+        listing_urls = collect_listing_urls(driver, query)
+        if not listing_urls:
+            return jsonify({"status": "error", "query": query, "message": "No listings found"}), 404
+
+        total = len(listing_urls)
+        results = []
+
+        # Phase 2: visit each URL directly and extract
+        for i, listing_url in enumerate(listing_urls):
+            try:
+                driver.get(listing_url)
+                # Wait for detail panel name to appear
+                WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "h1.DUwDvf"))
+                )
+                time.sleep(0.5)  # brief settle
+
+                detail = extract_listing_detail(driver)
+                if detail and detail.get("name"):
+                    detail["_index"] = i + 1
+                    results.append(detail)
+            except Exception:
+                continue  # skip failed listings
 
         return jsonify({
             "status": "success",
             "query": query,
-            "total": result.get("total", len(result.get("results", []))),
-            "results": result.get("results", [])
+            "total": total,
+            "results": results
         })
     except Exception as e:
         return jsonify({"status": "error", "query": query, "message": str(e)}), 500
