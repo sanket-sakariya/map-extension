@@ -364,12 +364,26 @@ def get_results(
         "offset": offset,
         "results": [
             {
-                "id": b.id, "name": b.name, "rating": float(b.rating) if b.rating else None,
-                "review_count": b.review_count, "category": b.category,
-                "address": b.address, "city": b.city, "state": b.state,
-                "phone": b.phone, "website": b.website, "cid": b.cid,
-                "place_id": b.place_id, "maps_url": b.maps_url,
-                "query": b.query, "scraped_at": str(b.scraped_at)
+                "id": b.id,
+                "name": b.name,
+                "rating": float(b.rating) if b.rating else None,
+                "review_count": b.review_count,
+                "category": b.category,
+                "address": b.address,
+                "city": b.city,
+                "state": b.state,
+                "phone": b.phone,
+                "website": b.website,
+                "cid": b.cid,
+                "place_id": b.place_id,
+                "plus_code": b.plus_code,
+                "maps_url": b.maps_url,
+                "hours": b.hours,
+                "current_status": b.current_status,
+                "identifies_as": b.identifies_as,
+                "reviews": b.reviews,
+                "query": b.query,
+                "scraped_at": str(b.scraped_at)
             }
             for b in rows
         ]

@@ -385,13 +385,42 @@ async function loadQueryResults() {
   if (!d.results?.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No results found</td></tr>';
   } else {
-    tbody.innerHTML = d.results.map(r =>
-      `<tr><td style="font-weight:500;">${r.name || '-'}</td><td>${r.rating || '-'}</td><td>${r.review_count || 0}</td><td><span class="tag tag-blue">${r.category || '-'}</span></td><td>${r.phone || '-'}</td><td>${r.city || '-'}</td><td style="font-size:11px;color:var(--text-muted);">${r.cid || '-'}</td></tr>`
-    ).join('');
+    tbody.innerHTML = d.results.map((r, i) => `
+      <tr style="cursor:pointer;" onclick="toggleDetail(${i})">
+        <td style="font-weight:500;">${r.name || '-'}</td>
+        <td>${r.rating || '-'}</td>
+        <td>${r.review_count || 0}</td>
+        <td><span class="tag tag-blue">${r.category || '-'}</span></td>
+        <td>${r.phone || '-'}</td>
+        <td>${r.city || '-'}</td>
+        <td style="font-size:11px;color:var(--text-muted);">${r.cid || '-'}</td>
+      </tr>
+      <tr class="detail-row" id="detail-${i}" style="display:none;">
+        <td colspan="7" style="padding:12px;background:var(--primary-50);border-radius:8px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+            <div><strong>Full Address:</strong> ${r.address || '-'}</div>
+            <div><strong>Place ID:</strong> ${r.place_id || '-'}</div>
+            <div><strong>Plus Code:</strong> ${r.plus_code || '-'}</div>
+            <div><strong>Website:</strong> ${r.website ? `<a href="${r.website}" target="_blank" style="color:var(--primary);">${r.website}</a>` : '-'}</div>
+            <div><strong>Status:</strong> ${r.current_status || '-'}</div>
+            <div><strong>Identifies As:</strong> ${r.identifies_as || '-'}</div>
+            <div><strong>CID:</strong> ${r.cid || '-'}</div>
+            <div><strong>Maps URL:</strong> ${r.maps_url ? `<a href="${r.maps_url}" target="_blank" style="color:var(--primary);">Open in Maps</a>` : '-'}</div>
+            <div style="grid-column:1/-1;"><strong>Hours:</strong> ${r.hours ? Object.entries(r.hours).map(([d,t]) => `${d}: ${t}`).join(' | ') : '-'}</div>
+            ${r.reviews?.length ? `<div style="grid-column:1/-1;"><strong>Reviews (${r.reviews.length}):</strong><div style="max-height:100px;overflow-y:auto;margin-top:4px;padding:6px;background:var(--card);border:1px solid var(--border);border-radius:6px;">${r.reviews.slice(0,3).map(rv => `<div style="margin-bottom:6px;"><span style="font-weight:500;">${rv.reviewer}</span> <span class="tag tag-blue">${rv.stars}</span> <span style="color:var(--text-muted);">${rv.time}</span><br><span style="color:var(--text-secondary);">${rv.text?.slice(0,150)}${rv.text?.length > 150 ? '...' : ''}</span></div>`).join('')}</div></div>` : ''}
+          </div>
+        </td>
+      </tr>
+    `).join('');
   }
 
   const totalPages = Math.ceil((d.total || 0) / RESULTS_PER_PAGE);
   renderPagination(totalPages);
+}
+
+function toggleDetail(i) {
+  const row = document.getElementById(`detail-${i}`);
+  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
 }
 
 function renderPagination(totalPages) {
