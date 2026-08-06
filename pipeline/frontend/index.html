@@ -170,8 +170,14 @@ function setMode(el) {
 }
 
 async function api(path, opts = {}) {
-  const r = await fetch(`${API}${path}`, { headers: {'Content-Type':'application/json'}, ...opts });
-  return r.json();
+  try {
+    const r = await fetch(`${API}${path}`, { headers: {'Content-Type':'application/json'}, ...opts });
+    if (!r.ok) return { error: `HTTP ${r.status}` };
+    return await r.json();
+  } catch(e) {
+    console.error(`API ${path} failed:`, e);
+    return { error: e.message };
+  }
 }
 
 async function savePat() {
@@ -189,10 +195,21 @@ async function loadCategories() {
 }
 
 async function loadCountries() {
-  const d = await api('/api/countries');
-  const sel = document.getElementById('country');
-  sel.innerHTML = '<option value="">Select country...</option>' +
-    (d.countries || []).map(c => `<option value="${c}">${c}</option>`).join('');
+  try {
+    const d = await api('/api/countries');
+    const sel = document.getElementById('country');
+    if (d.countries && d.countries.length) {
+      sel.innerHTML = '<option value="">Select country...</option>' +
+        d.countries.map(c => `<option value="${c}">${c}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">No countries loaded</option>';
+    }
+  } catch(e) {
+    console.error('loadCountries failed:', e);
+    document.getElementById('country').innerHTML = '<option value="">Error loading countries</option>';
+    // Retry after 2s
+    setTimeout(loadCountries, 2000);
+  }
 }
 
 async function loadCities() {
