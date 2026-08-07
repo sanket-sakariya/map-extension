@@ -288,12 +288,13 @@ def generate_queries(req: QueryGenerateRequest):
 def pipeline_status(db: Session = Depends(get_db)):
     r = get_redis()
     scraper_count = db.query(ActiveScraper).count()
+    total_records = db.query(Business).count()
     return {
         "query_queue": r.llen("query_queue"),
         "active_jobs": r.llen("active_jobs"),
         "result_queue": r.llen("result_queue"),
         "active_scrapers": scraper_count,
-        "total_inserted": int(r.get("stats:total_inserted") or 0)
+        "total_inserted": total_records
     }
 
 
