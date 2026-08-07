@@ -22,8 +22,8 @@ spec:
             - -c
             - |
               BACKEND="http://backend.map-extractor.svc.cluster.local:8000"
-              MIN_SCRAPERS=10
-              MAX_SCRAPERS=20
+              MIN_SCRAPERS=1
+              MAX_SCRAPERS=10
 
               echo "=== Scraper Autoscaler ==="
               echo "Min: $MIN_SCRAPERS | Max: $MAX_SCRAPERS"
@@ -43,7 +43,6 @@ spec:
               # If below minimum and there are queries, start more
               if [ "$CURRENT" -lt "$MIN_SCRAPERS" ] && [ "$QUEUE" -gt 0 ]; then
                 NEED=$((MIN_SCRAPERS - CURRENT))
-                # Don't exceed max
                 if [ $((CURRENT + NEED)) -gt "$MAX_SCRAPERS" ]; then
                   NEED=$((MAX_SCRAPERS - CURRENT))
                 fi
