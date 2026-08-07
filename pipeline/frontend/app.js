@@ -79,6 +79,7 @@ function renderIcons() {
   // Results
   document.getElementById('btn-search').innerHTML = `${icons.search} Search`;
   document.getElementById('btn-back').innerHTML = `${icons.chevronLeft} Back to Queries`;
+  document.getElementById('btn-export').innerHTML = `${icons.download} Export CSV`;
 
   // Settings
   document.getElementById('pat-title').innerHTML = `${icons.key} GitHub Authentication`;
@@ -454,6 +455,62 @@ function renderPag(totalPages, current, fnName) {
   // Last
   h += `<div class="page-btn" onclick="${fnName}(${totalPages})" ${current>=totalPages?'style="opacity:0.3;pointer-events:none;"':''} title="Last">&#187;</div>`;
   c.innerHTML = h;
+}
+
+// ─── Export CSV ─────────────────────────────────────────────────────────────
+async function exportCSV() {
+  if (!selectedQuery) return;
+  const btn = document.getElementById('btn-export');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  // Fetch ALL results for this query (no pagination)
+  const params = new URLSearchParams({ limit: 10000, offset: 0, query: selectedQuery });
+  const d = await api(`/api/results?${params}`);
+
+  if (!d.results?.length) {
+    toast('No data to export', 'error');
+    btn.innerHTML = `${icons.download} Export CSV`;
+    btn.disabled = false;
+    return;
+  }
+
+  // Build CSV
+  const headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL'];
+  const rows = d.results.map(r => [
+    r.name || '',
+    r.rating || '',
+    r.review_count || '',
+    r.category || '',
+    r.phone || '',
+    (r.address || '').replace(/,/g, ' '),
+    r.city || '',
+    r.state || '',
+    r.website || '',
+    r.cid || '',
+    r.place_id || '',
+    r.plus_code || '',
+    r.current_status || '',
+    r.hours ? Object.entries(r.hours).map(([d,t]) => `${d}: ${t}`).join(' | ') : '',
+    r.maps_url || ''
+  ]);
+
+  const csvContent = [headers, ...rows].map(row =>
+    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+
+  // Download
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${selectedQuery.replace(/[^a-zA-Z0-9]/g, '_')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  btn.innerHTML = `${icons.download} Export CSV`;
+  btn.disabled = false;
+  toast(`Exported ${d.results.length} records`, 'success');
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
