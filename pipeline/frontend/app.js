@@ -79,7 +79,8 @@ function renderIcons() {
   // Results
   document.getElementById('btn-search').innerHTML = `${icons.search} Search`;
   document.getElementById('btn-back').innerHTML = `${icons.chevronLeft} Back to Queries`;
-  document.getElementById('btn-export').innerHTML = `${icons.download} Export CSV`;
+  document.getElementById('btn-export').innerHTML = `${icons.download} Export All`;
+  document.getElementById('btn-export-filtered').innerHTML = `${icons.download} Export Filtered`;
 
   // Settings
   document.getElementById('pat-title').innerHTML = `${icons.key} GitHub Authentication`;
@@ -464,20 +465,56 @@ async function exportCSV() {
   btn.innerHTML = `<span class="spinner"></span> Exporting...`;
   btn.disabled = true;
 
-  // Fetch ALL results for this query (no pagination)
   const params = new URLSearchParams({ limit: 10000, offset: 0, query: selectedQuery });
   const d = await api(`/api/results?${params}`);
+  downloadCSV(d.results, `${selectedQuery}_all`);
 
-  if (!d.results?.length) {
+  btn.innerHTML = `${icons.download} Export All`;
+  btn.disabled = false;
+}
+
+async function exportFilteredCSV() {
+  if (!selectedQuery) return;
+  const btn = document.getElementById('btn-export-filtered');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  // Use exact same filters as the current view
+  const search = document.getElementById('r-search').value;
+  const city = document.getElementById('r-city').value;
+  const category = document.getElementById('r-category').value;
+  const min_rating = document.getElementById('r-rating').value || 0;
+  const phone_only = document.getElementById('r-phone').checked;
+  const no_phone = document.getElementById('r-no-phone').checked;
+
+  const params = new URLSearchParams({
+    limit: 10000, offset: 0, search, city, category, min_rating, phone_only, no_phone,
+    sort_by: resultsSort.by, sort_order: resultsSort.order, query: selectedQuery
+  });
+  const d = await api(`/api/results?${params}`);
+
+  // Build filename from active filters
+  let filterName = selectedQuery;
+  if (phone_only) filterName += '_phone-only';
+  if (no_phone) filterName += '_no-phone';
+  if (city) filterName += `_${city}`;
+  if (category) filterName += `_${category}`;
+  if (min_rating > 0) filterName += `_min${min_rating}`;
+
+  downloadCSV(d.results, filterName);
+
+  btn.innerHTML = `${icons.download} Export Filtered`;
+  btn.disabled = false;
+}
+
+function downloadCSV(results, filename) {
+  if (!results?.length) {
     toast('No data to export', 'error');
-    btn.innerHTML = `${icons.download} Export CSV`;
-    btn.disabled = false;
     return;
   }
 
-  // Build CSV
   const headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL'];
-  const rows = d.results.map(r => [
+  const rows = results.map(r => [
     r.name || '',
     r.rating || '',
     r.review_count || '',
@@ -499,18 +536,14 @@ async function exportCSV() {
     row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
   ).join('\n');
 
-  // Download
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${selectedQuery.replace(/[^a-zA-Z0-9]/g, '_')}.csv`;
+  a.download = `${filename.replace(/[^a-zA-Z0-9_-]/g, '_')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
-
-  btn.innerHTML = `${icons.download} Export CSV`;
-  btn.disabled = false;
-  toast(`Exported ${d.results.length} records`, 'success');
+  toast(`Exported ${results.length} records`, 'success');
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
