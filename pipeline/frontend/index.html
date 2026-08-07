@@ -145,17 +145,6 @@
           <input type="text" class="input" id="r-city" placeholder="City" style="width:120px;">
           <input type="text" class="input" id="r-category" placeholder="Category" style="width:130px;">
           <input type="number" class="input" id="r-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
-          <select class="input" id="r-sort" style="width:130px;">
-            <option value="rating">Sort: Rating</option>
-            <option value="reviews">Sort: Reviews</option>
-            <option value="name">Sort: Name</option>
-            <option value="date">Sort: Newest</option>
-            <option value="city">Sort: City</option>
-          </select>
-          <select class="input" id="r-sort-order" style="width:80px;">
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </select>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-phone"> Phone only</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-no-phone"> No phone</label>
           <button class="btn btn-primary" id="btn-search" onclick="loadQueryResults()"></button>
@@ -168,7 +157,18 @@
             <tbody id="results-tbody"></tbody>
           </table>
         </div>
-        <div class="pagination" id="pagination"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--text-muted);">Per page:</label>
+            <select class="input" id="r-per-page" style="width:70px;margin:0;" onchange="changePerPage()">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="pagination" id="pagination"></div>
+        </div>
       </div>
     </div>
 

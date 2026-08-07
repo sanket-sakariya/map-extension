@@ -192,6 +192,10 @@ select.input { cursor: pointer; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { padding: 10px 12px; text-align: left; background: var(--primary-50); color: var(--text-secondary); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.3px; }
+th.sortable { cursor: pointer; user-select: none; transition: color var(--transition); }
+th.sortable:hover { color: var(--primary); }
+th.sortable .sort-icon { display: inline-block; margin-left: 3px; opacity: 0.3; font-size: 10px; }
+th.sortable.asc .sort-icon, th.sortable.desc .sort-icon { opacity: 1; color: var(--primary); }
 td { padding: 10px 12px; border-top: 1px solid var(--border); color: var(--text); }
 tr:hover td { background: var(--primary-50); }
 

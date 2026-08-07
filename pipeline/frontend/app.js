@@ -5,7 +5,6 @@ let queryMode = 'one_biz_all_loc';
 let allCategories = [];
 let allCities = [];
 let resultsPage = 1;
-const RESULTS_PER_PAGE = 25;
 
 // ─── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -303,13 +302,13 @@ async function generateQueries() {
 // ─── Results Page ───────────────────────────────────────────────────────────
 let selectedQuery = '';
 let queryListPage = 1;
-const QUERIES_PER_PAGE = 20;
+let resultsSort = { by: 'rating', order: 'desc' };
+
+function getPerPage() { return parseInt(document.getElementById('r-per-page')?.value || 25); }
+function changePerPage() { resultsPage = 1; queryListPage = 1; loadResults(); }
 
 async function loadResults() {
-  if (!selectedQuery) {
-    await loadQueryList();
-    return;
-  }
+  if (!selectedQuery) { await loadQueryList(); return; }
   await loadQueryResults();
 }
 
@@ -317,91 +316,72 @@ async function loadQueryList() {
   const d = await api('/api/results/queries');
   const tbody = document.getElementById('results-tbody');
   const info = document.getElementById('results-info');
-
-  // Show query-level filters, hide detail-level filters
   document.getElementById('results-filters').style.display = 'none';
   document.getElementById('results-back').style.display = 'none';
   document.getElementById('query-filters').style.display = 'flex';
 
   if (!d.queries?.length) {
     info.textContent = 'No completed queries yet';
-    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet. Generate queries and wait for the pipeline to process them.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet.</td></tr>';
     document.getElementById('pagination').innerHTML = '';
     return;
   }
 
-  // Apply local filter
   const filterText = document.getElementById('q-filter').value.toLowerCase();
   let queries = d.queries;
-  if (filterText) {
-    queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
-  }
-
-  // Apply sort
+  if (filterText) queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
   const sortBy = document.getElementById('q-sort').value;
-  if (sortBy === 'count') {
-    queries.sort((a, b) => b.count - a.count);
-  } else if (sortBy === 'name') {
-    queries.sort((a, b) => a.query.localeCompare(b.query));
-  }
-  // 'date' is already default order from API (newest first)
+  if (sortBy === 'count') queries.sort((a, b) => b.count - a.count);
+  else if (sortBy === 'name') queries.sort((a, b) => a.query.localeCompare(b.query));
 
-  const totalFiltered = queries.length;
-  const totalPages = Math.ceil(totalFiltered / QUERIES_PER_PAGE);
+  const perPage = getPerPage();
+  const totalPages = Math.ceil(queries.length / perPage);
+  const start = (queryListPage - 1) * perPage;
+  const pageQueries = queries.slice(start, start + perPage);
 
-  // Paginate
-  const start = (queryListPage - 1) * QUERIES_PER_PAGE;
-  const pageQueries = queries.slice(start, start + QUERIES_PER_PAGE);
-
-  info.textContent = `${totalFiltered} of ${d.total} completed queries (page ${queryListPage}/${totalPages || 1})`;
-
-  // Change table headers for query list view
+  info.textContent = `${queries.length} of ${d.total} queries — page ${queryListPage}/${totalPages || 1}`;
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
-
   tbody.innerHTML = pageQueries.map(q => `
     <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
       <td style="font-weight:500;">${q.query}</td>
-      <td><span class="tag tag-blue">${q.count} businesses</span></td>
+      <td><span class="tag tag-blue">${q.count}</span></td>
       <td style="font-size:12px;color:var(--text-muted);">${new Date(q.last_scraped).toLocaleString()}</td>
-      <td><button class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();openQuery('${q.query.replace(/'/g, "\\'")}')">${icons.chevronRight} View</button></td>
-    </tr>
-  `).join('');
-
-  renderQueryPagination(totalPages);
+      <td><button class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();openQuery('${q.query.replace(/'/g, "\\'")}')">${icons.chevronRight}</button></td>
+    </tr>`).join('');
+  renderPag(totalPages, queryListPage, 'goQueryPage');
 }
-
-function renderQueryPagination(totalPages) {
-  const container = document.getElementById('pagination');
-  if (totalPages <= 1) { container.innerHTML = ''; return; }
-
-  let html = '';
-  html += `<div class="page-btn" onclick="goQueryPage(${queryListPage - 1})" ${queryListPage <= 1 ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronLeft}</div>`;
-
-  const start = Math.max(1, queryListPage - 2);
-  const end = Math.min(totalPages, queryListPage + 2);
-  for (let i = start; i <= end; i++) {
-    html += `<div class="page-btn ${i === queryListPage ? 'active' : ''}" onclick="goQueryPage(${i})">${i}</div>`;
-  }
-
-  html += `<div class="page-btn" onclick="goQueryPage(${queryListPage + 1})" ${queryListPage >= totalPages ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronRight}</div>`;
-  container.innerHTML = html;
-}
-
 function goQueryPage(n) { queryListPage = n; loadQueryList(); }
 
 function openQuery(query) {
   selectedQuery = query;
   resultsPage = 1;
+  resultsSort = { by: 'rating', order: 'desc' };
   document.getElementById('query-filters').style.display = 'none';
   document.getElementById('results-filters').style.display = 'flex';
   document.getElementById('results-back').style.display = 'flex';
-  document.getElementById('results-thead').innerHTML = '<tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>CID</th></tr>';
+  loadQueryResults();
+}
+function backToQueries() { selectedQuery = ''; loadQueryList(); }
+
+function sortCol(field) {
+  if (resultsSort.by === field) resultsSort.order = resultsSort.order === 'desc' ? 'asc' : 'desc';
+  else resultsSort = { by: field, order: 'desc' };
+  resultsPage = 1;
   loadQueryResults();
 }
 
-function backToQueries() {
-  selectedQuery = '';
-  loadQueryList();
+function buildSortHeaders() {
+  const cols = [
+    { f: 'name', l: 'Name' }, { f: 'rating', l: 'Rating' }, { f: 'reviews', l: 'Reviews' },
+    { f: 'category', l: 'Category' }, { f: 'city', l: 'City' }, { f: null, l: 'Phone' }, { f: null, l: 'CID' }
+  ];
+  return '<tr>' + cols.map(c => {
+    if (!c.f) return `<th>${c.l}</th>`;
+    const active = resultsSort.by === c.f;
+    const arrow = active ? (resultsSort.order === 'asc' ? ' &#9650;' : ' &#9660;') : ' <span style="opacity:0.3;">&#9650;&#9660;</span>';
+    const cls = active ? `sortable ${resultsSort.order}` : 'sortable';
+    return `<th class="${cls}" onclick="sortCol('${c.f}')">${c.l}${arrow}</th>`;
+  }).join('') + '</tr>';
 }
 
 async function loadQueryResults() {
@@ -411,78 +391,70 @@ async function loadQueryResults() {
   const min_rating = document.getElementById('r-rating').value || 0;
   const phone_only = document.getElementById('r-phone').checked;
   const no_phone = document.getElementById('r-no-phone').checked;
-  const sort_by = document.getElementById('r-sort').value;
-  const sort_order = document.getElementById('r-sort-order').value;
-  const offset = (resultsPage - 1) * RESULTS_PER_PAGE;
+  const perPage = getPerPage();
+  const offset = (resultsPage - 1) * perPage;
 
   const params = new URLSearchParams({
-    limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only, no_phone,
-    sort_by, sort_order, query: selectedQuery
+    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone,
+    sort_by: resultsSort.by, sort_order: resultsSort.order, query: selectedQuery
   });
-
   const d = await api(`/api/results?${params}`);
-  document.getElementById('results-info').innerHTML = `<span style="font-weight:600;color:var(--primary);">${selectedQuery}</span> — ${d.total || 0} results`;
+  document.getElementById('results-info').innerHTML = `<strong style="color:var(--primary);">${selectedQuery}</strong> — ${d.total || 0} results`;
+  document.getElementById('results-thead').innerHTML = buildSortHeaders();
 
   const tbody = document.getElementById('results-tbody');
   if (!d.results?.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No results found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No results</td></tr>';
   } else {
     tbody.innerHTML = d.results.map((r, i) => `
       <tr style="cursor:pointer;" onclick="toggleDetail(${i})">
-        <td style="font-weight:500;">${r.name || '-'}</td>
-        <td>${r.rating || '-'}</td>
-        <td>${r.review_count || 0}</td>
-        <td><span class="tag tag-blue">${r.category || '-'}</span></td>
-        <td>${r.phone || '-'}</td>
-        <td>${r.city || '-'}</td>
-        <td style="font-size:11px;color:var(--text-muted);">${r.cid || '-'}</td>
+        <td style="font-weight:500;">${r.name||'-'}</td><td>${r.rating||'-'}</td><td>${r.review_count||0}</td>
+        <td><span class="tag tag-blue">${r.category||'-'}</span></td><td>${r.city||'-'}</td><td>${r.phone||'-'}</td>
+        <td style="font-size:11px;color:var(--text-muted);">${r.cid||'-'}</td>
       </tr>
-      <tr class="detail-row" id="detail-${i}" style="display:none;">
+      <tr id="detail-${i}" style="display:none;">
         <td colspan="7" style="padding:12px;background:var(--primary-50);border-radius:8px;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
-            <div><strong>Full Address:</strong> ${r.address || '-'}</div>
-            <div><strong>Place ID:</strong> ${r.place_id || '-'}</div>
-            <div><strong>Plus Code:</strong> ${r.plus_code || '-'}</div>
-            <div><strong>Website:</strong> ${r.website ? `<a href="${r.website}" target="_blank" style="color:var(--primary);">${r.website}</a>` : '-'}</div>
-            <div><strong>Status:</strong> ${r.current_status || '-'}</div>
-            <div><strong>Identifies As:</strong> ${r.identifies_as || '-'}</div>
-            <div><strong>CID:</strong> ${r.cid || '-'}</div>
-            <div><strong>Maps URL:</strong> ${r.maps_url ? `<a href="${r.maps_url}" target="_blank" style="color:var(--primary);">Open in Maps</a>` : '-'}</div>
-            <div style="grid-column:1/-1;"><strong>Hours:</strong> ${r.hours ? Object.entries(r.hours).map(([d,t]) => `${d}: ${t}`).join(' | ') : '-'}</div>
-            ${r.reviews?.length ? `<div style="grid-column:1/-1;"><strong>Reviews (${r.reviews.length}):</strong><div style="max-height:100px;overflow-y:auto;margin-top:4px;padding:6px;background:var(--card);border:1px solid var(--border);border-radius:6px;">${r.reviews.slice(0,3).map(rv => `<div style="margin-bottom:6px;"><span style="font-weight:500;">${rv.reviewer}</span> <span class="tag tag-blue">${rv.stars}</span> <span style="color:var(--text-muted);">${rv.time}</span><br><span style="color:var(--text-secondary);">${rv.text?.slice(0,150)}${rv.text?.length > 150 ? '...' : ''}</span></div>`).join('')}</div></div>` : ''}
+            <div><strong>Address:</strong> ${r.address||'-'}</div>
+            <div><strong>Place ID:</strong> ${r.place_id||'-'}</div>
+            <div><strong>Plus Code:</strong> ${r.plus_code||'-'}</div>
+            <div><strong>Website:</strong> ${r.website?`<a href="${r.website}" target="_blank" style="color:var(--primary);">${r.website}</a>`:'-'}</div>
+            <div><strong>Status:</strong> ${r.current_status||'-'}</div>
+            <div><strong>Identifies As:</strong> ${r.identifies_as||'-'}</div>
+            <div><strong>Maps:</strong> ${r.maps_url?`<a href="${r.maps_url}" target="_blank" style="color:var(--primary);">Open</a>`:'-'}</div>
+            <div><strong>CID:</strong> ${r.cid||'-'}</div>
+            <div style="grid-column:1/-1;"><strong>Hours:</strong> ${r.hours?Object.entries(r.hours).map(([d,t])=>`${d}: ${t}`).join(' | '):'-'}</div>
+            ${r.reviews?.length?`<div style="grid-column:1/-1;"><strong>Reviews (${r.reviews.length}):</strong><div style="max-height:80px;overflow-y:auto;margin-top:4px;padding:6px;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:11px;">${r.reviews.slice(0,3).map(rv=>`<div style="margin-bottom:4px;"><b>${rv.reviewer}</b> ${rv.stars} <i>${rv.time}</i><br>${(rv.text||'').slice(0,120)}</div>`).join('')}</div></div>`:''}
           </div>
         </td>
-      </tr>
-    `).join('');
+      </tr>`).join('');
   }
-
-  const totalPages = Math.ceil((d.total || 0) / RESULTS_PER_PAGE);
-  renderPagination(totalPages);
+  const totalPages = Math.ceil((d.total||0)/perPage);
+  renderPag(totalPages, resultsPage, 'goPage');
 }
+function toggleDetail(i) { const r=document.getElementById(`detail-${i}`); r.style.display=r.style.display==='none'?'table-row':'none'; }
+function goPage(n) { resultsPage = n; loadQueryResults(); }
 
-function toggleDetail(i) {
-  const row = document.getElementById(`detail-${i}`);
-  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+// ─── Pagination (shared) ────────────────────────────────────────────────────
+function renderPag(totalPages, current, fnName) {
+  const c = document.getElementById('pagination');
+  if (totalPages <= 1) { c.innerHTML = ''; return; }
+  let h = '';
+  // First
+  h += `<div class="page-btn" onclick="${fnName}(1)" ${current<=1?'style="opacity:0.3;pointer-events:none;"':''} title="First">&#171;</div>`;
+  // Prev
+  h += `<div class="page-btn" onclick="${fnName}(${current-1})" ${current<=1?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronLeft}</div>`;
+  // Numbers
+  const s = Math.max(1, current-2), e = Math.min(totalPages, current+2);
+  if (s > 1) h += `<div class="page-btn" onclick="${fnName}(1)">1</div><span style="padding:0 3px;color:var(--text-muted);">..</span>`;
+  for (let i=s;i<=e;i++) h += `<div class="page-btn ${i===current?'active':''}" onclick="${fnName}(${i})">${i}</div>`;
+  if (e < totalPages) h += `<span style="padding:0 3px;color:var(--text-muted);">..</span><div class="page-btn" onclick="${fnName}(${totalPages})">${totalPages}</div>`;
+  // Next
+  h += `<div class="page-btn" onclick="${fnName}(${current+1})" ${current>=totalPages?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronRight}</div>`;
+  // Last
+  h += `<div class="page-btn" onclick="${fnName}(${totalPages})" ${current>=totalPages?'style="opacity:0.3;pointer-events:none;"':''} title="Last">&#187;</div>`;
+  c.innerHTML = h;
 }
-
-function renderPagination(totalPages) {
-  const container = document.getElementById('pagination');
-  if (totalPages <= 1) { container.innerHTML = ''; return; }
-
-  let html = '';
-  html += `<div class="page-btn" onclick="goPage(${resultsPage - 1})" ${resultsPage <= 1 ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronLeft}</div>`;
-
-  const start = Math.max(1, resultsPage - 2);
-  const end = Math.min(totalPages, resultsPage + 2);
-  for (let i = start; i <= end; i++) {
-    html += `<div class="page-btn ${i === resultsPage ? 'active' : ''}" onclick="goPage(${i})">${i}</div>`;
-  }
-
-  html += `<div class="page-btn" onclick="goPage(${resultsPage + 1})" ${resultsPage >= totalPages ? 'style="opacity:0.3;pointer-events:none;"' : ''}>${icons.chevronRight}</div>`;
-  container.innerHTML = html;
-}
-
-function goPage(n) { resultsPage = n; loadResults(); }
 
 // ─── Settings ───────────────────────────────────────────────────────────────
 async function loadConfig() {
