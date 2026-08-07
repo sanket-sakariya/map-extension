@@ -13,11 +13,17 @@ env:
   BACKEND_IMAGE: noasdaewplzc1305/map-extractor-backend
   FRONTEND_IMAGE: noasdaewplzc1305/map-extractor-frontend
   NAMESPACE: map-extractor
+  AWS_REGION: us-east-1
+  EKS_CLUSTER: article-innovator-eks-aug
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
 
     steps:
       - uses: actions/checkout@v4
@@ -50,13 +56,9 @@ jobs:
           curl -sLO "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           sudo install -m0755 kubectl /usr/local/bin/kubectl
 
-      - name: Configure AWS & kubeconfig
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_REGION: us-east-1
+      - name: Configure kubeconfig
         run: |
-          aws eks update-kubeconfig --name article-innovator-eks-aug --region us-east-1
+          aws eks update-kubeconfig --name $EKS_CLUSTER --region $AWS_REGION
 
       - name: Deploy to EKS
         run: |
