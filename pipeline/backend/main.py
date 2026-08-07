@@ -294,7 +294,10 @@ def pipeline_status(db: Session = Depends(get_db)):
         "active_jobs": r.llen("active_jobs"),
         "result_queue": r.llen("result_queue"),
         "active_scrapers": scraper_count,
-        "total_inserted": total_records
+        "total_inserted": total_records,
+        "dead_letter_queue": r.llen("dead_letter_queue"),
+        "dlx_retries": int(r.get("stats:dlx_retries") or 0),
+        "completed_jobs": int(r.get("stats:completed_jobs") or 0)
     }
 
 
@@ -332,6 +335,8 @@ def get_results(
     min_reviews: int = 0,
     phone_only: bool = False,
     no_phone: bool = False,
+    sort_by: str = "rating",
+    sort_order: str = "desc",
     db: Session = Depends(get_db)
 ):
     q = db.query(Business)
@@ -360,7 +365,23 @@ def get_results(
         q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
 
     total = q.count()
-    rows = q.order_by(Business.rating.desc().nulls_last()).offset(offset).limit(limit).all()
+
+    # Dynamic sorting
+    sort_columns = {
+        "rating": Business.rating,
+        "reviews": Business.review_count,
+        "name": Business.name,
+        "date": Business.scraped_at,
+        "city": Business.city,
+        "category": Business.category,
+    }
+    sort_col = sort_columns.get(sort_by, Business.rating)
+    if sort_order == "asc":
+        q = q.order_by(sort_col.asc().nulls_last())
+    else:
+        q = q.order_by(sort_col.desc().nulls_last())
+
+    rows = q.offset(offset).limit(limit).all()
 
     return {
         "total": total,

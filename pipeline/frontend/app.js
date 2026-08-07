@@ -144,6 +144,8 @@ async function refreshStatus() {
     { num: d.active_jobs || 0, label: 'Active Jobs' },
     { num: d.result_queue || 0, label: 'Result Queue' },
     { num: d.total_inserted || 0, label: 'DB Records' },
+    { num: d.completed_jobs || 0, label: 'Completed' },
+    { num: d.dead_letter_queue || 0, label: 'Failed (DLX)' },
   ];
   document.getElementById('stats-grid').innerHTML = stats.map(s =>
     `<div class="stat-card"><div class="stat-num">${s.num}</div><div class="stat-label">${s.label}</div></div>`
@@ -335,6 +337,15 @@ async function loadQueryList() {
     queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
   }
 
+  // Apply sort
+  const sortBy = document.getElementById('q-sort').value;
+  if (sortBy === 'count') {
+    queries.sort((a, b) => b.count - a.count);
+  } else if (sortBy === 'name') {
+    queries.sort((a, b) => a.query.localeCompare(b.query));
+  }
+  // 'date' is already default order from API (newest first)
+
   const totalFiltered = queries.length;
   const totalPages = Math.ceil(totalFiltered / QUERIES_PER_PAGE);
 
@@ -400,11 +411,13 @@ async function loadQueryResults() {
   const min_rating = document.getElementById('r-rating').value || 0;
   const phone_only = document.getElementById('r-phone').checked;
   const no_phone = document.getElementById('r-no-phone').checked;
+  const sort_by = document.getElementById('r-sort').value;
+  const sort_order = document.getElementById('r-sort-order').value;
   const offset = (resultsPage - 1) * RESULTS_PER_PAGE;
 
   const params = new URLSearchParams({
     limit: RESULTS_PER_PAGE, offset, search, city, category, min_rating, phone_only, no_phone,
-    query: selectedQuery
+    sort_by, sort_order, query: selectedQuery
   });
 
   const d = await api(`/api/results?${params}`);
