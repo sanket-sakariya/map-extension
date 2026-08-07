@@ -216,6 +216,18 @@ def start_workflows(req: WorkflowStartRequest):
     return {"triggered": req.count, "pipeline_url": pipeline_url, "results": results}
 
 
+@app.get("/api/workflows/queued")
+def get_queued_workflows():
+    """Check how many workflows are in queued/waiting state on GitHub."""
+    pat = get_pat()
+    if not pat:
+        return {"queued": 0, "error": "PAT not configured"}
+    queued_runs = github_client.list_runs(pat, "queued")
+    waiting_runs = github_client.list_runs(pat, "waiting")
+    total = len(queued_runs) + len(waiting_runs)
+    return {"queued": total}
+
+
 @app.post("/api/workflows/stop")
 def stop_workflows(db: Session = Depends(get_db)):
     pat = get_pat()

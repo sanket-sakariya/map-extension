@@ -40,6 +40,21 @@ spec:
               QUEUE=${QUEUE:-0}
               echo "Query queue: $QUEUE"
 
+              # Check if any GitHub workflows are queued (waiting to start)
+              CONFIG=$(curl -s "$BACKEND/api/config")
+              PAT=$(echo "$CONFIG" | grep -o '"pat_preview":"[^"]*"' | head -1)
+              # Use the backend to check queued workflows
+              QUEUED_RUNS=$(curl -s "$BACKEND/api/workflows/queued" 2>/dev/null)
+              QUEUED_COUNT=$(echo "$QUEUED_RUNS" | grep -o '"queued":[0-9]*' | grep -o '[0-9]*')
+              QUEUED_COUNT=${QUEUED_COUNT:-0}
+              echo "Queued workflows: $QUEUED_COUNT"
+
+              # If there are queued workflows, don't start new ones
+              if [ "$QUEUED_COUNT" -gt 0 ]; then
+                echo "Workflows already queued ($QUEUED_COUNT). Skipping."
+                exit 0
+              fi
+
               # If below minimum and there are queries, start more
               if [ "$CURRENT" -lt "$MIN_SCRAPERS" ] && [ "$QUEUE" -gt 0 ]; then
                 NEED=$((MIN_SCRAPERS - CURRENT))
