@@ -339,7 +339,7 @@ async function loadQueryList() {
   const start = (queryListPage - 1) * perPage;
   const pageQueries = queries.slice(start, start + perPage);
 
-  info.textContent = `${queries.length} of ${d.total} queries — page ${queryListPage}/${totalPages || 1}`;
+  info.textContent = `${queries.length} of ${d.total} queries — ${d.total_businesses || 0} total businesses — page ${queryListPage}/${totalPages || 1}`;
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
   tbody.innerHTML = pageQueries.map(q => `
     <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">

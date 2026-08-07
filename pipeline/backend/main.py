@@ -328,6 +328,7 @@ def get_result_queries(search: str = "", db: Session = Depends(get_db)):
         )).fetchall()
     return {
         "total": len(rows),
+        "total_businesses": sum(r[1] for r in rows),
         "queries": [{"query": r[0], "count": r[1], "last_scraped": str(r[2])} for r in rows]
     }
 
