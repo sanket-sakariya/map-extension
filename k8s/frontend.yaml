@@ -15,7 +15,8 @@ spec:
     spec:
       containers:
       - name: frontend
-        image: noasdaewplzc1305/map-extractor-frontend:latest
+        image: noasdaewplzc1305/map-extractor-frontend:v2
+        imagePullPolicy: Always
         ports:
         - containerPort: 80
         resources:
