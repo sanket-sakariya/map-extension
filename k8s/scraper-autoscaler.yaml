@@ -22,11 +22,21 @@ spec:
             - -c
             - |
               BACKEND="http://backend.map-extractor.svc.cluster.local:8000"
-              MIN_SCRAPERS=1
-              MAX_SCRAPERS=10
+              TARGET_SCRAPERS=10
 
               echo "=== Scraper Autoscaler ==="
-              echo "Min: $MIN_SCRAPERS | Max: $MAX_SCRAPERS"
+              echo "Target: $TARGET_SCRAPERS running scrapers"
+
+              # Check if any GitHub workflows are queued
+              QUEUED_RESP=$(curl -s "$BACKEND/api/workflows/queued" 2>/dev/null)
+              QUEUED_COUNT=$(echo "$QUEUED_RESP" | grep -o '"queued":[0-9]*' | grep -o '[0-9]*')
+              QUEUED_COUNT=${QUEUED_COUNT:-0}
+              echo "Queued workflows: $QUEUED_COUNT"
+
+              if [ "$QUEUED_COUNT" -gt 0 ]; then
+                echo "Workflows in queue ($QUEUED_COUNT). Skipping this cycle."
+                exit 0
+              fi
 
               # Get current active scrapers
               RESPONSE=$(curl -s "$BACKEND/api/scrapers")
@@ -40,40 +50,23 @@ spec:
               QUEUE=${QUEUE:-0}
               echo "Query queue: $QUEUE"
 
-              # Check if any GitHub workflows are queued (waiting to start)
-              CONFIG=$(curl -s "$BACKEND/api/config")
-              PAT=$(echo "$CONFIG" | grep -o '"pat_preview":"[^"]*"' | head -1)
-              # Use the backend to check queued workflows
-              QUEUED_RUNS=$(curl -s "$BACKEND/api/workflows/queued" 2>/dev/null)
-              QUEUED_COUNT=$(echo "$QUEUED_RUNS" | grep -o '"queued":[0-9]*' | grep -o '[0-9]*')
-              QUEUED_COUNT=${QUEUED_COUNT:-0}
-              echo "Queued workflows: $QUEUED_COUNT"
-
-              # If there are queued workflows, don't start new ones
-              if [ "$QUEUED_COUNT" -gt 0 ]; then
-                echo "Workflows already queued ($QUEUED_COUNT). Skipping."
+              # If queue is empty, no need for scrapers
+              if [ "$QUEUE" -eq 0 ]; then
+                echo "Queue empty. No action needed."
                 exit 0
               fi
 
-              # If below minimum and there are queries, start more
-              if [ "$CURRENT" -lt "$MIN_SCRAPERS" ] && [ "$QUEUE" -gt 0 ]; then
-                NEED=$((MIN_SCRAPERS - CURRENT))
-                if [ $((CURRENT + NEED)) -gt "$MAX_SCRAPERS" ]; then
-                  NEED=$((MAX_SCRAPERS - CURRENT))
-                fi
-                if [ "$NEED" -gt 0 ]; then
-                  echo "Starting $NEED scraper(s)..."
-                  RESULT=$(curl -s -X POST "$BACKEND/api/workflows/start" \
-                    -H "Content-Type: application/json" \
-                    -d "{\"count\": $NEED}")
-                  echo "Result: $RESULT"
-                fi
-              elif [ "$CURRENT" -ge "$MAX_SCRAPERS" ]; then
-                echo "Already at max ($MAX_SCRAPERS). No action."
-              elif [ "$QUEUE" -eq 0 ]; then
-                echo "Queue empty. No action needed."
+              # Calculate how many to start to reach target
+              if [ "$CURRENT" -lt "$TARGET_SCRAPERS" ]; then
+                NEED=$((TARGET_SCRAPERS - CURRENT))
+                echo "Need $NEED more scraper(s) to reach target $TARGET_SCRAPERS"
+                echo "Starting $NEED scraper(s)..."
+                RESULT=$(curl -s -X POST "$BACKEND/api/workflows/start" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"count\": $NEED}")
+                echo "Result: $RESULT"
               else
-                echo "Scrapers OK ($CURRENT). No action."
+                echo "Already at target ($CURRENT/$TARGET_SCRAPERS). No action."
               fi
 
               echo "=== Done ==="
