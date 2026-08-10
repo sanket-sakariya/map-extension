@@ -99,7 +99,7 @@ function renderNav() {
   const nav = document.getElementById('nav');
   nav.innerHTML = pages.map(p =>
     `<div class="nav-item ${p.id === currentPage ? 'active' : ''}" onclick="goTo('${p.id}')">${icons[p.icon]}<span>${p.label}</span></div>`
-  ).join('');
+  ).join('') + `<div class="nav-item" onclick="logout()" style="margin-top:auto;border-top:1px solid var(--border);padding-top:12px;color:var(--danger);">${icons.x}<span>Logout</span></div>`;
 
   // Logo
   document.getElementById('logo-text').innerHTML = `${icons.map} Maps Pipeline`;
