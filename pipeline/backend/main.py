@@ -65,6 +65,29 @@ def get_redis():
 class ConfigRequest(BaseModel):
     pat: str
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+# Hardcoded credentials
+AUTH_EMAIL = "jaydeep@botxbyte.com"
+AUTH_PASSWORD = "Jaydeep@1234"
+AUTH_TOKEN = "mex_auth_7f3k9x2p4q8w1y6z"  # simple static token
+
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    if req.email == AUTH_EMAIL and req.password == AUTH_PASSWORD:
+        return {"status": "ok", "token": AUTH_TOKEN}
+    return {"status": "error", "message": "Invalid email or password"}
+
+
+@app.get("/api/auth/verify")
+def verify_auth(token: str = ""):
+    if token == AUTH_TOKEN:
+        return {"status": "ok", "email": AUTH_EMAIL}
+    return {"status": "error", "message": "Invalid token"}
+
 class WorkflowStartRequest(BaseModel):
     count: int = 1
 

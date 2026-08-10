@@ -6,8 +6,67 @@ let allCategories = [];
 let allCities = [];
 let resultsPage = 1;
 
+// ─── Auth ───────────────────────────────────────────────────────────────────
+function getToken() { return localStorage.getItem('mex_token') || ''; }
+function setToken(t) { localStorage.setItem('mex_token', t); }
+function clearToken() { localStorage.removeItem('mex_token'); }
+
+async function checkAuth() {
+  const token = getToken();
+  if (!token) { showLogin(); return; }
+  const d = await api(`/api/auth/verify?token=${token}`);
+  if (d.status === 'ok') { hideLogin(); } else { showLogin(); }
+}
+
+function showLogin() {
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('login-logo').innerHTML = icons.map;
+}
+
+function hideLogin() {
+  document.getElementById('login-screen').style.display = 'none';
+}
+
+async function doLogin() {
+  const btn = document.getElementById('btn-login');
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+
+  if (!email || !password) { errEl.textContent = 'Please enter email and password'; errEl.style.display = 'block'; return; }
+
+  btn.innerHTML = '<span class="spinner"></span> Signing in...';
+  btn.disabled = true;
+
+  const d = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+
+  btn.innerHTML = 'Sign In';
+  btn.disabled = false;
+
+  if (d.token) {
+    setToken(d.token);
+    hideLogin();
+    initApp();
+  } else {
+    errEl.textContent = d.message || 'Invalid credentials';
+    errEl.style.display = 'block';
+  }
+}
+
+function logout() {
+  clearToken();
+  showLogin();
+}
+
 // ─── Init ───────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  checkAuth();
+  initApp();
+});
+
+function initApp() {
+  if (!getToken()) return;
   renderNav();
   renderIcons();
   loadConfig();
@@ -15,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadCountries();
   refreshStatus();
   setInterval(refreshStatus, 8000);
-});
+}
 
 // ─── API Helper ─────────────────────────────────────────────────────────────
 async function api(path, opts = {}) {
