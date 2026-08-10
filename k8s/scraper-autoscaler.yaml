@@ -22,7 +22,7 @@ spec:
             - -c
             - |
               BACKEND="http://backend.map-extractor.svc.cluster.local:8000"
-              TARGET_SCRAPERS=10
+              TARGET_SCRAPERS=20
 
               echo "=== Scraper Autoscaler ==="
               echo "Target: $TARGET_SCRAPERS running scrapers"
