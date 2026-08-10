@@ -32,6 +32,7 @@ const pages = [
   { id: 'scrapers', label: 'Scrapers', icon: 'server' },
   { id: 'queries', label: 'Query Generator', icon: 'search' },
   { id: 'results', label: 'Results', icon: 'database' },
+  { id: 'alldata', label: 'All Data', icon: 'filter' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
@@ -55,6 +56,7 @@ function goTo(pageId) {
   closeSidebar();
   if (pageId === 'scrapers') refreshWorkflows();
   if (pageId === 'results') loadResults();
+  if (pageId === 'alldata') loadAllData();
 }
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
@@ -87,6 +89,10 @@ function renderIcons() {
   document.getElementById('tunnel-title').innerHTML = `${icons.globe} Public Tunnel`;
   document.getElementById('btn-save-pat').innerHTML = `${icons.check} Save Token`;
   document.getElementById('btn-generate').innerHTML = `${icons.zap} Generate & Queue`;
+
+  // All Data
+  document.getElementById('alldata-filter-title').innerHTML = `${icons.filter} Global Filters`;
+  document.getElementById('btn-export-alldata').innerHTML = `${icons.download} Export Filtered`;
 
   // Biz/Loc titles
   document.getElementById('biz-title').innerHTML = `${icons.search} Business Categories`;
@@ -544,6 +550,99 @@ function downloadCSV(results, filename) {
   a.click();
   URL.revokeObjectURL(url);
   toast(`Exported ${results.length} records`, 'success');
+}
+
+// ─── All Data Page ──────────────────────────────────────────────────────────
+let allDataPage = 1;
+
+async function loadAllData() {
+  const search = document.getElementById('ad-search').value;
+  const city = document.getElementById('ad-city').value;
+  const category = document.getElementById('ad-category').value;
+  const min_rating = document.getElementById('ad-rating').value || 0;
+  const phone_only = document.getElementById('ad-phone').checked;
+  const no_phone = document.getElementById('ad-no-phone').checked;
+  const sort_by = document.getElementById('ad-sort').value;
+  const sort_order = document.getElementById('ad-order').value;
+  const perPage = parseInt(document.getElementById('ad-per-page').value);
+  const offset = (allDataPage - 1) * perPage;
+
+  const params = new URLSearchParams({
+    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, sort_by, sort_order
+  });
+
+  const d = await api(`/api/results?${params}`);
+  document.getElementById('alldata-info').textContent = `${d.total || 0} records found`;
+
+  const tbody = document.getElementById('alldata-tbody');
+  if (!d.results?.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No records found</td></tr>';
+  } else {
+    tbody.innerHTML = d.results.map(r =>
+      `<tr>
+        <td style="font-weight:500;">${r.name || '-'}</td>
+        <td>${r.rating || '-'}</td>
+        <td>${r.review_count || 0}</td>
+        <td><span class="tag tag-blue">${r.category || '-'}</span></td>
+        <td>${r.phone || '-'}</td>
+        <td>${r.city || '-'}</td>
+        <td style="font-size:11px;color:var(--text-muted);">${r.query || '-'}</td>
+      </tr>`
+    ).join('');
+  }
+
+  const totalPages = Math.ceil((d.total || 0) / perPage);
+  renderAllDataPag(totalPages);
+}
+
+function renderAllDataPag(totalPages) {
+  const c = document.getElementById('alldata-pagination');
+  if (totalPages <= 1) { c.innerHTML = ''; return; }
+  let h = '';
+  h += `<div class="page-btn" onclick="goAllDataPage(1)" ${allDataPage<=1?'style="opacity:0.3;pointer-events:none;"':''}>&#171;</div>`;
+  h += `<div class="page-btn" onclick="goAllDataPage(${allDataPage-1})" ${allDataPage<=1?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronLeft}</div>`;
+  const s = Math.max(1, allDataPage-2), e = Math.min(totalPages, allDataPage+2);
+  if (s > 1) h += `<div class="page-btn" onclick="goAllDataPage(1)">1</div><span style="padding:0 3px;color:var(--text-muted);">..</span>`;
+  for (let i=s;i<=e;i++) h += `<div class="page-btn ${i===allDataPage?'active':''}" onclick="goAllDataPage(${i})">${i}</div>`;
+  if (e < totalPages) h += `<span style="padding:0 3px;color:var(--text-muted);">..</span><div class="page-btn" onclick="goAllDataPage(${totalPages})">${totalPages}</div>`;
+  h += `<div class="page-btn" onclick="goAllDataPage(${allDataPage+1})" ${allDataPage>=totalPages?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronRight}</div>`;
+  h += `<div class="page-btn" onclick="goAllDataPage(${totalPages})" ${allDataPage>=totalPages?'style="opacity:0.3;pointer-events:none;"':''}>&#187;</div>`;
+  c.innerHTML = h;
+}
+
+function goAllDataPage(n) { allDataPage = n; loadAllData(); }
+
+async function exportAllDataCSV() {
+  const btn = document.getElementById('btn-export-alldata');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  const search = document.getElementById('ad-search').value;
+  const city = document.getElementById('ad-city').value;
+  const category = document.getElementById('ad-category').value;
+  const min_rating = document.getElementById('ad-rating').value || 0;
+  const phone_only = document.getElementById('ad-phone').checked;
+  const no_phone = document.getElementById('ad-no-phone').checked;
+  const sort_by = document.getElementById('ad-sort').value;
+  const sort_order = document.getElementById('ad-order').value;
+
+  const params = new URLSearchParams({
+    limit: 50000, offset: 0, search, city, category, min_rating, phone_only, no_phone, sort_by, sort_order
+  });
+
+  const d = await api(`/api/results?${params}`);
+
+  let filename = 'all_data';
+  if (phone_only) filename += '_phone-only';
+  if (no_phone) filename += '_no-phone';
+  if (city) filename += `_${city}`;
+  if (category) filename += `_${category}`;
+  if (min_rating > 0) filename += `_min${min_rating}`;
+
+  downloadCSV(d.results, filename);
+
+  btn.innerHTML = `${icons.download} Export Filtered`;
+  btn.disabled = false;
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────

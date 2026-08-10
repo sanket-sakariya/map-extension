@@ -175,6 +175,57 @@
     </div>
 
     <!-- Page: Settings -->
+    <div class="page" id="page-alldata">
+      <div class="page-header">
+        <h2>All Data</h2>
+        <p>Search and export across all records regardless of query</p>
+      </div>
+      <div class="card">
+        <div class="card-title" id="alldata-filter-title"></div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <input type="text" class="input" id="ad-search" placeholder="Search name or address..." style="width:200px;">
+          <input type="text" class="input" id="ad-city" placeholder="City" style="width:120px;">
+          <input type="text" class="input" id="ad-category" placeholder="Category" style="width:130px;">
+          <input type="number" class="input" id="ad-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
+          <select class="input" id="ad-sort" style="width:120px;">
+            <option value="rating">Rating</option>
+            <option value="reviews">Reviews</option>
+            <option value="name">Name</option>
+            <option value="date">Newest</option>
+            <option value="city">City</option>
+          </select>
+          <select class="input" id="ad-order" style="width:80px;">
+            <option value="desc">Desc</option>
+            <option value="asc">Asc</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-phone"> Phone only</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-no-phone"> No phone</label>
+          <button class="btn btn-primary" onclick="loadAllData()">Search</button>
+          <button class="btn btn-success" onclick="exportAllDataCSV()" id="btn-export-alldata"></button>
+        </div>
+        <div id="alldata-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
+        <div class="table-wrap">
+          <table>
+            <thead id="alldata-thead"><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>Query</th></tr></thead>
+            <tbody id="alldata-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--text-muted);">Per page:</label>
+            <select class="input" id="ad-per-page" style="width:70px;margin:0;" onchange="allDataPage=1;loadAllData()">
+              <option value="10">10</option>
+              <option value="25" selected>25</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+          </div>
+          <div class="pagination" id="alldata-pagination"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Page: Settings -->
     <div class="page" id="page-settings">
       <div class="page-header">
         <h2>Settings</h2>
