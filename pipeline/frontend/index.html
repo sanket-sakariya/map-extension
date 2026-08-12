@@ -169,6 +169,7 @@
           <input type="number" class="input" id="r-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-phone"> Phone only</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-no-phone"> No phone</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="r-website"> Has website</label>
           <button class="btn btn-primary" id="btn-search" onclick="loadQueryResults()"></button>
           <button class="btn btn-success" onclick="exportFilteredCSV()" id="btn-export-filtered"></button>
         </div>
@@ -221,6 +222,7 @@
           </select>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-phone"> Phone only</label>
           <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-no-phone"> No phone</label>
+          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-website"> Has website</label>
           <button class="btn btn-primary" onclick="loadAllData()">Search</button>
           <button class="btn btn-success" onclick="exportAllDataCSV()" id="btn-export-alldata"></button>
         </div>

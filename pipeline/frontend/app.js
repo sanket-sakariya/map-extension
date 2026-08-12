@@ -458,11 +458,12 @@ async function loadQueryResults() {
   const min_rating = document.getElementById('r-rating').value || 0;
   const phone_only = document.getElementById('r-phone').checked;
   const no_phone = document.getElementById('r-no-phone').checked;
+  const website_only = document.getElementById('r-website').checked;
   const perPage = getPerPage();
   const offset = (resultsPage - 1) * perPage;
 
   const params = new URLSearchParams({
-    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone,
+    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, website_only,
     sort_by: resultsSort.by, sort_order: resultsSort.order, query: selectedQuery
   });
   const d = await api(`/api/results?${params}`);
@@ -530,9 +531,13 @@ async function exportCSV() {
   btn.innerHTML = `<span class="spinner"></span> Exporting...`;
   btn.disabled = true;
 
-  const params = new URLSearchParams({ limit: 10000, offset: 0, query: selectedQuery });
-  const d = await api(`/api/results?${params}`);
-  downloadCSV(d.results, `${selectedQuery}_all`);
+  const params = new URLSearchParams({ query: selectedQuery });
+  const a = document.createElement('a');
+  a.href = `/api/results/export?${params.toString()}`;
+  a.download = `${selectedQuery}_all.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 
   btn.innerHTML = `${icons.download} Export All`;
   btn.disabled = false;
@@ -551,22 +556,28 @@ async function exportFilteredCSV() {
   const min_rating = document.getElementById('r-rating').value || 0;
   const phone_only = document.getElementById('r-phone').checked;
   const no_phone = document.getElementById('r-no-phone').checked;
+  const website_only = document.getElementById('r-website').checked;
 
   const params = new URLSearchParams({
-    limit: 10000, offset: 0, search, city, category, min_rating, phone_only, no_phone,
+    search, city, category, min_rating, phone_only, no_phone, website_only,
     sort_by: resultsSort.by, sort_order: resultsSort.order, query: selectedQuery
   });
-  const d = await api(`/api/results?${params}`);
 
   // Build filename from active filters
   let filterName = selectedQuery;
   if (phone_only) filterName += '_phone-only';
   if (no_phone) filterName += '_no-phone';
+  if (website_only) filterName += '_website-only';
   if (city) filterName += `_${city}`;
   if (category) filterName += `_${category}`;
   if (min_rating > 0) filterName += `_min${min_rating}`;
 
-  downloadCSV(d.results, filterName);
+  const a = document.createElement('a');
+  a.href = `/api/results/export?${params.toString()}`;
+  a.download = `${filterName}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 
   btn.innerHTML = `${icons.download} Export Filtered`;
   btn.disabled = false;
@@ -621,13 +632,14 @@ async function loadAllData() {
   const min_rating = document.getElementById('ad-rating').value || 0;
   const phone_only = document.getElementById('ad-phone').checked;
   const no_phone = document.getElementById('ad-no-phone').checked;
+  const website_only = document.getElementById('ad-website').checked;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
   const perPage = parseInt(document.getElementById('ad-per-page').value);
   const offset = (allDataPage - 1) * perPage;
 
   const params = new URLSearchParams({
-    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, sort_by, sort_order
+    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, website_only, sort_by, sort_order
   });
 
   const d = await api(`/api/results?${params}`);
@@ -682,23 +694,28 @@ async function exportAllDataCSV() {
   const min_rating = document.getElementById('ad-rating').value || 0;
   const phone_only = document.getElementById('ad-phone').checked;
   const no_phone = document.getElementById('ad-no-phone').checked;
+  const website_only = document.getElementById('ad-website').checked;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
 
   const params = new URLSearchParams({
-    limit: 50000, offset: 0, search, city, category, min_rating, phone_only, no_phone, sort_by, sort_order
+    search, city, category, min_rating, phone_only, no_phone, website_only, sort_by, sort_order
   });
-
-  const d = await api(`/api/results?${params}`);
 
   let filename = 'all_data';
   if (phone_only) filename += '_phone-only';
   if (no_phone) filename += '_no-phone';
+  if (website_only) filename += '_website-only';
   if (city) filename += `_${city}`;
   if (category) filename += `_${category}`;
   if (min_rating > 0) filename += `_min${min_rating}`;
 
-  downloadCSV(d.results, filename);
+  const a = document.createElement('a');
+  a.href = `/api/results/export?${params.toString()}`;
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 
   btn.innerHTML = `${icons.download} Export Filtered`;
   btn.disabled = false;
