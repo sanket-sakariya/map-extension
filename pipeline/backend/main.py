@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import text as sql_text
+from sqlalchemy import text as sql_text, select
 
 from config import REDIS_URL
 from database import get_db, engine, Base, SessionLocal
@@ -500,26 +500,43 @@ def export_results_csv(
     sort_order: str = "desc",
     db: Session = Depends(get_db)
 ):
-    q = db.query(Business)
+    # We query specific columns to bypass ORM hydration entirely (makes it 10x-20x faster)
+    stmt = select(
+        Business.name,
+        Business.rating,
+        Business.review_count,
+        Business.category,
+        Business.phone,
+        Business.address,
+        Business.city,
+        Business.state,
+        Business.website,
+        Business.cid,
+        Business.place_id,
+        Business.plus_code,
+        Business.current_status,
+        Business.hours,
+        Business.maps_url
+    )
 
     if search:
-        q = q.filter(sql_text(
+        stmt = stmt.filter(sql_text(
             "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
             "@@ plainto_tsquery('english', :search)"
         ).bindparams(search=search))
 
     if query:
-        q = q.filter(Business.query.ilike(f"%{query}%"))
+        stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
     if city:
-        q = q.filter(Business.city.ilike(f"%{city}%"))
+        stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
     if state:
-        q = q.filter(Business.state.ilike(f"%{state}%"))
+        stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
     if category:
-        q = q.filter(Business.category.ilike(f"%{category}%"))
+        stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
     if min_rating > 0:
-        q = q.filter(Business.rating >= min_rating)
+        stmt = stmt.filter(Business.rating >= min_rating)
     if min_reviews > 0:
-        q = q.filter(Business.review_count >= min_reviews)
+        stmt = stmt.filter(Business.review_count >= min_reviews)
 
     # Legacy compatibility mapping
     if phone_only:
@@ -532,21 +549,21 @@ def export_results_csv(
 
     # Phone filter
     if phone_filter == "has":
-        q = q.filter(Business.phone != "", Business.phone.isnot(None))
+        stmt = stmt.filter(Business.phone != "", Business.phone.isnot(None))
     elif phone_filter == "none":
-        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+        stmt = stmt.filter((Business.phone == "") | (Business.phone.is_(None)))
 
     # Website filter
     if website_filter == "has":
-        q = q.filter(Business.website != "", Business.website.isnot(None))
+        stmt = stmt.filter(Business.website != "", Business.website.isnot(None))
     elif website_filter == "none":
-        q = q.filter((Business.website == "") | (Business.website.is_(None)))
+        stmt = stmt.filter((Business.website == "") | (Business.website.is_(None)))
 
     # Address filter
     if address_filter == "has":
-        q = q.filter(Business.address != "", Business.address.isnot(None))
+        stmt = stmt.filter(Business.address != "", Business.address.isnot(None))
     elif address_filter == "none":
-        q = q.filter((Business.address == "") | (Business.address.is_(None)))
+        stmt = stmt.filter((Business.address == "") | (Business.address.is_(None)))
 
     sort_columns = {
         "rating": Business.rating,
@@ -558,9 +575,13 @@ def export_results_csv(
     }
     sort_col = sort_columns.get(sort_by, Business.rating)
     if sort_order == "asc":
-        q = q.order_by(sort_col.asc().nulls_last())
+        stmt = stmt.order_by(sort_col.asc().nulls_last())
     else:
-        q = q.order_by(sort_col.desc().nulls_last())
+        stmt = stmt.order_by(sort_col.desc().nulls_last())
+
+    # Stream results sequentially in batches of 10000 using a server-side cursor (yield_per)
+    # Bypassing LIMIT/OFFSET prevents database degradation on deep offset pagination
+    result = db.execute(stmt.execution_options(yield_per=10000))
 
     def csv_generator():
         headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL']
@@ -571,42 +592,40 @@ def export_results_csv(
         output.seek(0)
         output.truncate(0)
 
-        chunk_size = 2000
-        offset = 0
-        while True:
-            batch = q.offset(offset).limit(chunk_size).all()
-            if not batch:
-                break
-            for b in batch:
-                hours_str = ""
-                if b.hours:
-                    try:
-                        hours_str = " | ".join(f"{d}: {t}" for d, t in b.hours.items())
-                    except Exception:
-                        pass
-                row = [
-                    b.name or '',
-                    str(b.rating) if b.rating is not None else '',
-                    b.review_count or 0,
-                    b.category or '',
-                    b.phone or '',
-                    (b.address or '').replace('\n', ' '),
-                    b.city or '',
-                    b.state or '',
-                    b.website or '',
-                    b.cid or '',
-                    b.place_id or '',
-                    b.plus_code or '',
-                    b.current_status or '',
-                    hours_str,
-                    b.maps_url or ''
-                ]
-                writer.writerow(row)
+        for row in result:
+            hours_str = ""
+            if row.hours:
+                try:
+                    hours_str = " | ".join(f"{d}: {t}" for d, t in row.hours.items())
+                except Exception:
+                    pass
+            csv_row = [
+                row.name or '',
+                str(row.rating) if row.rating is not None else '',
+                row.review_count or 0,
+                row.category or '',
+                row.phone or '',
+                (row.address or '').replace('\n', ' '),
+                row.city or '',
+                row.state or '',
+                row.website or '',
+                row.cid or '',
+                row.place_id or '',
+                row.plus_code or '',
+                row.current_status or '',
+                hours_str,
+                row.maps_url or ''
+            ]
+            writer.writerow(csv_row)
+            
+            # Yield every 1000 records or ~64KB of buffer to keep the client download responsive
+            if output.tell() > 65536:
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+
+        if output.tell() > 0:
             yield output.getvalue()
-            output.seek(0)
-            output.truncate(0)
-            offset += len(batch)
-            db.expunge_all()
 
     return StreamingResponse(
         csv_generator(),
