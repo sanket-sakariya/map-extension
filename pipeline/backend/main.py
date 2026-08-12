@@ -579,9 +579,7 @@ def export_results_csv(
     else:
         stmt = stmt.order_by(sort_col.desc().nulls_last())
 
-    # Stream results sequentially in batches of 10000 using a server-side cursor (yield_per)
-    # Bypassing LIMIT/OFFSET prevents database degradation on deep offset pagination
-    result = db.execute(stmt.execution_options(yield_per=10000))
+    result = db.execute(stmt)
 
     def csv_generator():
         headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL']
