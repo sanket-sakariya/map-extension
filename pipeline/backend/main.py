@@ -3,9 +3,12 @@ import json
 import time
 from contextlib import asynccontextmanager
 
+import csv
+import io
 import redis as redis_lib
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text
@@ -371,6 +374,7 @@ def get_results(
     min_reviews: int = 0,
     phone_only: bool = False,
     no_phone: bool = False,
+    website_only: bool = False,
     sort_by: str = "rating",
     sort_order: str = "desc",
     db: Session = Depends(get_db)
@@ -399,6 +403,8 @@ def get_results(
         q = q.filter(Business.phone != "", Business.phone.isnot(None))
     if no_phone:
         q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+    if website_only:
+        q = q.filter(Business.website != "", Business.website.isnot(None))
 
     total = q.count()
 
@@ -449,3 +455,113 @@ def get_results(
             for b in rows
         ]
     }
+
+
+@app.get("/api/results/export")
+def export_results_csv(
+    search: str = "",
+    query: str = "",
+    city: str = "",
+    state: str = "",
+    category: str = "",
+    min_rating: float = 0,
+    min_reviews: int = 0,
+    phone_only: bool = False,
+    no_phone: bool = False,
+    website_only: bool = False,
+    sort_by: str = "rating",
+    sort_order: str = "desc",
+    db: Session = Depends(get_db)
+):
+    q = db.query(Business)
+
+    if search:
+        q = q.filter(sql_text(
+            "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
+            "@@ plainto_tsquery('english', :search)"
+        ).bindparams(search=search))
+
+    if query:
+        q = q.filter(Business.query.ilike(f"%{query}%"))
+    if city:
+        q = q.filter(Business.city.ilike(f"%{city}%"))
+    if state:
+        q = q.filter(Business.state.ilike(f"%{state}%"))
+    if category:
+        q = q.filter(Business.category.ilike(f"%{category}%"))
+    if min_rating > 0:
+        q = q.filter(Business.rating >= min_rating)
+    if min_reviews > 0:
+        q = q.filter(Business.review_count >= min_reviews)
+    if phone_only:
+        q = q.filter(Business.phone != "", Business.phone.isnot(None))
+    if no_phone:
+        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+    if website_only:
+        q = q.filter(Business.website != "", Business.website.isnot(None))
+
+    sort_columns = {
+        "rating": Business.rating,
+        "reviews": Business.review_count,
+        "name": Business.name,
+        "date": Business.scraped_at,
+        "city": Business.city,
+        "category": Business.category,
+    }
+    sort_col = sort_columns.get(sort_by, Business.rating)
+    if sort_order == "asc":
+        q = q.order_by(sort_col.asc().nulls_last())
+    else:
+        q = q.order_by(sort_col.desc().nulls_last())
+
+    def csv_generator():
+        headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL']
+        output = io.StringIO()
+        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+        writer.writerow(headers)
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+
+        chunk_size = 2000
+        offset = 0
+        while True:
+            batch = q.offset(offset).limit(chunk_size).all()
+            if not batch:
+                break
+            for b in batch:
+                hours_str = ""
+                if b.hours:
+                    try:
+                        hours_str = " | ".join(f"{d}: {t}" for d, t in b.hours.items())
+                    except Exception:
+                        pass
+                row = [
+                    b.name or '',
+                    str(b.rating) if b.rating is not None else '',
+                    b.review_count or 0,
+                    b.category or '',
+                    b.phone or '',
+                    (b.address or '').replace('\n', ' '),
+                    b.city or '',
+                    b.state or '',
+                    b.website or '',
+                    b.cid or '',
+                    b.place_id or '',
+                    b.plus_code or '',
+                    b.current_status or '',
+                    hours_str,
+                    b.maps_url or ''
+                ]
+                writer.writerow(row)
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+            offset += len(batch)
+            db.expunge_all()
+
+    return StreamingResponse(
+        csv_generator(),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=export.csv"}
+    )
