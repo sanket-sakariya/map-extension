@@ -497,136 +497,148 @@ def export_results_csv(
     website_filter: str = "all",
     address_filter: str = "all",
     sort_by: str = "rating",
-    sort_order: str = "desc",
-    db: Session = Depends(get_db)
+    sort_order: str = "desc"
 ):
-    # We query specific columns to bypass ORM hydration entirely (makes it 10x-20x faster)
-    stmt = select(
-        Business.name,
-        Business.rating,
-        Business.review_count,
-        Business.category,
-        Business.phone,
-        Business.address,
-        Business.city,
-        Business.state,
-        Business.website,
-        Business.cid,
-        Business.place_id,
-        Business.plus_code,
-        Business.current_status,
-        Business.hours,
-        Business.maps_url
-    )
+    db = SessionLocal()
+    tx = db.begin()
+    try:
+        # We query specific columns to bypass ORM hydration entirely (makes it 10x-20x faster)
+        stmt = select(
+            Business.name,
+            Business.rating,
+            Business.review_count,
+            Business.category,
+            Business.phone,
+            Business.address,
+            Business.city,
+            Business.state,
+            Business.website,
+            Business.cid,
+            Business.place_id,
+            Business.plus_code,
+            Business.current_status,
+            Business.hours,
+            Business.maps_url
+        )
 
-    if search:
-        stmt = stmt.filter(sql_text(
-            "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
-            "@@ plainto_tsquery('english', :search)"
-        ).bindparams(search=search))
+        if search:
+            stmt = stmt.filter(sql_text(
+                "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
+                "@@ plainto_tsquery('english', :search)"
+            ).bindparams(search=search))
 
-    if query:
-        stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
-    if city:
-        stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
-    if state:
-        stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
-    if category:
-        stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
-    if min_rating > 0:
-        stmt = stmt.filter(Business.rating >= min_rating)
-    if min_reviews > 0:
-        stmt = stmt.filter(Business.review_count >= min_reviews)
+        if query:
+            stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
+        if city:
+            stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
+        if state:
+            stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
+        if category:
+            stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
+        if min_rating > 0:
+            stmt = stmt.filter(Business.rating >= min_rating)
+        if min_reviews > 0:
+            stmt = stmt.filter(Business.review_count >= min_reviews)
 
-    # Legacy compatibility mapping
-    if phone_only:
-        phone_filter = "has"
-    elif no_phone:
-        phone_filter = "none"
+        # Legacy compatibility mapping
+        if phone_only:
+            phone_filter = "has"
+        elif no_phone:
+            phone_filter = "none"
 
-    if website_only:
-        website_filter = "has"
+        if website_only:
+            website_filter = "has"
 
-    # Phone filter
-    if phone_filter == "has":
-        stmt = stmt.filter(Business.phone != "", Business.phone.isnot(None))
-    elif phone_filter == "none":
-        stmt = stmt.filter((Business.phone == "") | (Business.phone.is_(None)))
+        # Phone filter
+        if phone_filter == "has":
+            stmt = stmt.filter(Business.phone != "", Business.phone.isnot(None))
+        elif phone_filter == "none":
+            stmt = stmt.filter((Business.phone == "") | (Business.phone.is_(None)))
 
-    # Website filter
-    if website_filter == "has":
-        stmt = stmt.filter(Business.website != "", Business.website.isnot(None))
-    elif website_filter == "none":
-        stmt = stmt.filter((Business.website == "") | (Business.website.is_(None)))
+        # Website filter
+        if website_filter == "has":
+            stmt = stmt.filter(Business.website != "", Business.website.isnot(None))
+        elif website_filter == "none":
+            stmt = stmt.filter((Business.website == "") | (Business.website.is_(None)))
 
-    # Address filter
-    if address_filter == "has":
-        stmt = stmt.filter(Business.address != "", Business.address.isnot(None))
-    elif address_filter == "none":
-        stmt = stmt.filter((Business.address == "") | (Business.address.is_(None)))
+        # Address filter
+        if address_filter == "has":
+            stmt = stmt.filter(Business.address != "", Business.address.isnot(None))
+        elif address_filter == "none":
+            stmt = stmt.filter((Business.address == "") | (Business.address.is_(None)))
 
-    sort_columns = {
-        "rating": Business.rating,
-        "reviews": Business.review_count,
-        "name": Business.name,
-        "date": Business.scraped_at,
-        "city": Business.city,
-        "category": Business.category,
-    }
-    sort_col = sort_columns.get(sort_by, Business.rating)
-    if sort_order == "asc":
-        stmt = stmt.order_by(sort_col.asc().nulls_last())
-    else:
-        stmt = stmt.order_by(sort_col.desc().nulls_last())
+        sort_columns = {
+            "rating": Business.rating,
+            "reviews": Business.review_count,
+            "name": Business.name,
+            "date": Business.scraped_at,
+            "city": Business.city,
+            "category": Business.category,
+        }
+        sort_col = sort_columns.get(sort_by, Business.rating)
+        if sort_order == "asc":
+            stmt = stmt.order_by(sort_col.asc().nulls_last())
+        else:
+            stmt = stmt.order_by(sort_col.desc().nulls_last())
 
-    result = db.execute(stmt)
+        # Stream results sequentially in batches of 10000 using a server-side cursor (yield_per)
+        # Bypassing LIMIT/OFFSET prevents database degradation on deep offset pagination
+        result = db.execute(stmt.execution_options(yield_per=10000))
 
-    def csv_generator():
-        headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL']
-        output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-        writer.writerow(headers)
-        yield output.getvalue()
-        output.seek(0)
-        output.truncate(0)
-
-        for row in result:
-            hours_str = ""
-            if row.hours:
-                try:
-                    hours_str = " | ".join(f"{d}: {t}" for d, t in row.hours.items())
-                except Exception:
-                    pass
-            csv_row = [
-                row.name or '',
-                str(row.rating) if row.rating is not None else '',
-                row.review_count or 0,
-                row.category or '',
-                row.phone or '',
-                (row.address or '').replace('\n', ' '),
-                row.city or '',
-                row.state or '',
-                row.website or '',
-                row.cid or '',
-                row.place_id or '',
-                row.plus_code or '',
-                row.current_status or '',
-                hours_str,
-                row.maps_url or ''
-            ]
-            writer.writerow(csv_row)
-            
-            # Yield every 1000 records or ~64KB of buffer to keep the client download responsive
-            if output.tell() > 65536:
+        def csv_generator():
+            try:
+                headers = ['Name','Rating','Reviews','Category','Phone','Address','City','State','Website','CID','Place ID','Plus Code','Status','Hours','Maps URL']
+                output = io.StringIO()
+                writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+                writer.writerow(headers)
                 yield output.getvalue()
                 output.seek(0)
                 output.truncate(0)
 
-        if output.tell() > 0:
-            yield output.getvalue()
+                for row in result:
+                    hours_str = ""
+                    if row.hours:
+                        try:
+                            hours_str = " | ".join(f"{d}: {t}" for d, t in row.hours.items())
+                        except Exception:
+                            pass
+                    csv_row = [
+                        row.name or '',
+                        str(row.rating) if row.rating is not None else '',
+                        row.review_count or 0,
+                        row.category or '',
+                        row.phone or '',
+                        (row.address or '').replace('\n', ' '),
+                        row.city or '',
+                        row.state or '',
+                        row.website or '',
+                        row.cid or '',
+                        row.place_id or '',
+                        row.plus_code or '',
+                        row.current_status or '',
+                        hours_str,
+                        row.maps_url or ''
+                    ]
+                    writer.writerow(csv_row)
+                    
+                    # Yield every 1000 records or ~64KB of buffer to keep the client download responsive
+                    if output.tell() > 65536:
+                        yield output.getvalue()
+                        output.seek(0)
+                        output.truncate(0)
 
-    return StreamingResponse(
-        csv_generator(),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=export.csv"}
-    )
+                if output.tell() > 0:
+                    yield output.getvalue()
+            finally:
+                tx.close()
+                db.close()
+
+        return StreamingResponse(
+            csv_generator(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=export.csv"}
+        )
+    except Exception:
+        tx.rollback()
+        db.close()
+        raise
