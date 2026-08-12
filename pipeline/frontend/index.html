@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Maps Scraper Pipeline</title>
-<link rel="stylesheet" href="styles.css?v=2">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 
@@ -204,32 +204,83 @@
       </div>
       <div class="card">
         <div class="card-title" id="alldata-filter-title"></div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-          <input type="text" class="input" id="ad-search" placeholder="Search name or address..." style="width:200px;">
-          <input type="text" class="input" id="ad-city" placeholder="City" style="width:120px;">
-          <input type="text" class="input" id="ad-category" placeholder="Category" style="width:130px;">
-          <input type="number" class="input" id="ad-rating" placeholder="Min rating" style="width:100px;" step="0.5" min="0" max="5">
-          <select class="input" id="ad-sort" style="width:120px;">
-            <option value="rating">Rating</option>
-            <option value="reviews">Reviews</option>
-            <option value="name">Name</option>
-            <option value="date">Newest</option>
-            <option value="city">City</option>
-          </select>
-          <select class="input" id="ad-order" style="width:80px;">
-            <option value="desc">Desc</option>
-            <option value="asc">Asc</option>
-          </select>
-          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-phone"> Phone only</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-no-phone"> No phone</label>
-          <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary);"><input type="checkbox" id="ad-website"> Has website</label>
-          <button class="btn btn-primary" onclick="loadAllData()">Search</button>
+        <div class="filter-grid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:12px;margin-bottom:16px;">
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Search Name/Address</label>
+            <input type="text" class="input" id="ad-search" placeholder="e.g. plumber, beauty" style="width:100%;">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">City</label>
+            <input type="text" class="input" id="ad-city" placeholder="e.g. Rajkot" style="width:100%;">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Category</label>
+            <input type="text" class="input" id="ad-category" placeholder="e.g. Beautician" style="width:100%;">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Scraped Query</label>
+            <input type="text" class="input" id="ad-query" placeholder="e.g. plumber in new york" style="width:100%;">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Min Rating</label>
+            <input type="number" class="input" id="ad-rating" placeholder="Min rating" style="width:100%;" step="0.5" min="0" max="5">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Min Reviews</label>
+            <input type="number" class="input" id="ad-reviews" placeholder="Min reviews" style="width:100%;" min="0">
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Phone Filter</label>
+            <select class="input" id="ad-phone-filter" style="width:100%;">
+              <option value="all">All (With/Without)</option>
+              <option value="has">Has Phone</option>
+              <option value="none">No Phone</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Website Filter</label>
+            <select class="input" id="ad-website-filter" style="width:100%;">
+              <option value="all">All (With/Without)</option>
+              <option value="has">Has Website</option>
+              <option value="none">No Website</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Address Filter</label>
+            <select class="input" id="ad-address-filter" style="width:100%;">
+              <option value="all">All (With/Without)</option>
+              <option value="has">Has Address</option>
+              <option value="none">No Address</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort By</label>
+            <select class="input" id="ad-sort" style="width:100%;">
+              <option value="rating">Rating</option>
+              <option value="reviews">Reviews</option>
+              <option value="name">Name</option>
+              <option value="date">Newest</option>
+              <option value="city">City</option>
+            </select>
+          </div>
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort Order</label>
+            <select class="input" id="ad-order" style="width:100%;">
+              <option value="desc">Descending</option>
+              <option value="asc">Ascending</option>
+            </select>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-outline" onclick="resetAllDataFilters()" id="btn-reset-alldata"></button>
+          <button class="btn btn-primary" onclick="loadAllData()" id="btn-search-alldata"></button>
           <button class="btn btn-success" onclick="exportAllDataCSV()" id="btn-export-alldata"></button>
         </div>
         <div id="alldata-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
         <div class="table-wrap">
           <table>
-            <thead id="alldata-thead"><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>City</th><th>Query</th></tr></thead>
+            <thead id="alldata-thead"><tr><th>Name</th><th>Rating</th><th>Reviews</th><th>Category</th><th>Phone</th><th>Website</th><th>City</th><th>Query</th></tr></thead>
             <tbody id="alldata-tbody"></tbody>
           </table>
         </div>
@@ -277,7 +328,7 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script src="icons.js?v=2"></script>
-<script src="app.js?v=2"></script>
+<script src="icons.js?v=3"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

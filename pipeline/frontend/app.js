@@ -151,6 +151,8 @@ function renderIcons() {
 
   // All Data
   document.getElementById('alldata-filter-title').innerHTML = `${icons.filter} Global Filters`;
+  document.getElementById('btn-search-alldata').innerHTML = `${icons.search} Search`;
+  document.getElementById('btn-reset-alldata').innerHTML = `${icons.refresh} Reset`;
   document.getElementById('btn-export-alldata').innerHTML = `${icons.download} Export Filtered`;
 
   // Biz/Loc titles
@@ -629,17 +631,20 @@ async function loadAllData() {
   const search = document.getElementById('ad-search').value;
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
+  const query = document.getElementById('ad-query').value;
   const min_rating = document.getElementById('ad-rating').value || 0;
-  const phone_only = document.getElementById('ad-phone').checked;
-  const no_phone = document.getElementById('ad-no-phone').checked;
-  const website_only = document.getElementById('ad-website').checked;
+  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const phone_filter = document.getElementById('ad-phone-filter').value;
+  const website_filter = document.getElementById('ad-website-filter').value;
+  const address_filter = document.getElementById('ad-address-filter').value;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
   const perPage = parseInt(document.getElementById('ad-per-page').value);
   const offset = (allDataPage - 1) * perPage;
 
   const params = new URLSearchParams({
-    limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, website_only, sort_by, sort_order
+    limit: perPage, offset, search, query, city, category, min_rating, min_reviews,
+    phone_filter, website_filter, address_filter, sort_by, sort_order
   });
 
   const d = await api(`/api/results?${params}`);
@@ -647,7 +652,7 @@ async function loadAllData() {
 
   const tbody = document.getElementById('alldata-tbody');
   if (!d.results?.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No records found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px;">No records found</td></tr>';
   } else {
     tbody.innerHTML = d.results.map(r =>
       `<tr>
@@ -656,6 +661,7 @@ async function loadAllData() {
         <td>${r.review_count || 0}</td>
         <td><span class="tag tag-blue">${r.category || '-'}</span></td>
         <td>${r.phone || '-'}</td>
+        <td>${r.website ? `<a href="${r.website}" target="_blank" style="color:var(--primary);">${r.website.replace('https://', '').replace('http://', '').split('/')[0]}</a>` : '-'}</td>
         <td>${r.city || '-'}</td>
         <td style="font-size:11px;color:var(--text-muted);">${r.query || '-'}</td>
       </tr>`
@@ -691,21 +697,24 @@ async function exportAllDataCSV() {
   const search = document.getElementById('ad-search').value;
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
+  const query = document.getElementById('ad-query').value;
   const min_rating = document.getElementById('ad-rating').value || 0;
-  const phone_only = document.getElementById('ad-phone').checked;
-  const no_phone = document.getElementById('ad-no-phone').checked;
-  const website_only = document.getElementById('ad-website').checked;
+  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const phone_filter = document.getElementById('ad-phone-filter').value;
+  const website_filter = document.getElementById('ad-website-filter').value;
+  const address_filter = document.getElementById('ad-address-filter').value;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
 
   const params = new URLSearchParams({
-    search, city, category, min_rating, phone_only, no_phone, website_only, sort_by, sort_order
+    search, query, city, category, min_rating, min_reviews,
+    phone_filter, website_filter, address_filter, sort_by, sort_order
   });
 
   let filename = 'all_data';
-  if (phone_only) filename += '_phone-only';
-  if (no_phone) filename += '_no-phone';
-  if (website_only) filename += '_website-only';
+  if (phone_filter !== 'all') filename += `_phone-${phone_filter}`;
+  if (website_filter !== 'all') filename += `_website-${website_filter}`;
+  if (address_filter !== 'all') filename += `_address-${address_filter}`;
   if (city) filename += `_${city}`;
   if (category) filename += `_${category}`;
   if (min_rating > 0) filename += `_min${min_rating}`;
@@ -719,6 +728,22 @@ async function exportAllDataCSV() {
 
   btn.innerHTML = `${icons.download} Export Filtered`;
   btn.disabled = false;
+}
+
+function resetAllDataFilters() {
+  document.getElementById('ad-search').value = '';
+  document.getElementById('ad-city').value = '';
+  document.getElementById('ad-category').value = '';
+  document.getElementById('ad-query').value = '';
+  document.getElementById('ad-rating').value = '';
+  document.getElementById('ad-reviews').value = '';
+  document.getElementById('ad-phone-filter').value = 'all';
+  document.getElementById('ad-website-filter').value = 'all';
+  document.getElementById('ad-address-filter').value = 'all';
+  document.getElementById('ad-sort').value = 'rating';
+  document.getElementById('ad-order').value = 'desc';
+  allDataPage = 1;
+  loadAllData();
 }
 
 // ─── Settings ───────────────────────────────────────────────────────────────

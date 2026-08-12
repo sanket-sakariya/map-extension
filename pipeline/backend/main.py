@@ -375,6 +375,9 @@ def get_results(
     phone_only: bool = False,
     no_phone: bool = False,
     website_only: bool = False,
+    phone_filter: str = "all",
+    website_filter: str = "all",
+    address_filter: str = "all",
     sort_by: str = "rating",
     sort_order: str = "desc",
     db: Session = Depends(get_db)
@@ -399,12 +402,33 @@ def get_results(
         q = q.filter(Business.rating >= min_rating)
     if min_reviews > 0:
         q = q.filter(Business.review_count >= min_reviews)
+
+    # Legacy compatibility mapping
     if phone_only:
-        q = q.filter(Business.phone != "", Business.phone.isnot(None))
-    if no_phone:
-        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+        phone_filter = "has"
+    elif no_phone:
+        phone_filter = "none"
+
     if website_only:
+        website_filter = "has"
+
+    # Phone filter
+    if phone_filter == "has":
+        q = q.filter(Business.phone != "", Business.phone.isnot(None))
+    elif phone_filter == "none":
+        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+
+    # Website filter
+    if website_filter == "has":
         q = q.filter(Business.website != "", Business.website.isnot(None))
+    elif website_filter == "none":
+        q = q.filter((Business.website == "") | (Business.website.is_(None)))
+
+    # Address filter
+    if address_filter == "has":
+        q = q.filter(Business.address != "", Business.address.isnot(None))
+    elif address_filter == "none":
+        q = q.filter((Business.address == "") | (Business.address.is_(None)))
 
     total = q.count()
 
@@ -469,6 +493,9 @@ def export_results_csv(
     phone_only: bool = False,
     no_phone: bool = False,
     website_only: bool = False,
+    phone_filter: str = "all",
+    website_filter: str = "all",
+    address_filter: str = "all",
     sort_by: str = "rating",
     sort_order: str = "desc",
     db: Session = Depends(get_db)
@@ -493,12 +520,33 @@ def export_results_csv(
         q = q.filter(Business.rating >= min_rating)
     if min_reviews > 0:
         q = q.filter(Business.review_count >= min_reviews)
+
+    # Legacy compatibility mapping
     if phone_only:
-        q = q.filter(Business.phone != "", Business.phone.isnot(None))
-    if no_phone:
-        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+        phone_filter = "has"
+    elif no_phone:
+        phone_filter = "none"
+
     if website_only:
+        website_filter = "has"
+
+    # Phone filter
+    if phone_filter == "has":
+        q = q.filter(Business.phone != "", Business.phone.isnot(None))
+    elif phone_filter == "none":
+        q = q.filter((Business.phone == "") | (Business.phone.is_(None)))
+
+    # Website filter
+    if website_filter == "has":
         q = q.filter(Business.website != "", Business.website.isnot(None))
+    elif website_filter == "none":
+        q = q.filter((Business.website == "") | (Business.website.is_(None)))
+
+    # Address filter
+    if address_filter == "has":
+        q = q.filter(Business.address != "", Business.address.isnot(None))
+    elif address_filter == "none":
+        q = q.filter((Business.address == "") | (Business.address.is_(None)))
 
     sort_columns = {
         "rating": Business.rating,
