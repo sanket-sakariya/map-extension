@@ -264,6 +264,22 @@ tr:hover td { background: var(--primary-50); }
 
 .spinner-lg { width: 32px; height: 32px; border-width: 3px; }
 
+/* Skeleton loading rows (used while a search/filter is in flight) */
+.skeleton-row td { padding: 12px; }
+.skeleton-bar {
+  height: 14px;
+  border-radius: 6px;
+  width: 100%;
+  background: linear-gradient(90deg, var(--border) 25%, var(--primary-100) 37%, var(--border) 63%);
+  background-size: 400% 100%;
+  animation: skeletonShine 1.4s ease infinite;
+}
+
+@keyframes skeletonShine {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 /* Tags */
 .tag {
   display: inline-flex;
