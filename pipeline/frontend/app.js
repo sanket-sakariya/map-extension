@@ -157,6 +157,7 @@ function renderIcons() {
   document.getElementById('btn-search-alldata').innerHTML = `${icons.search} Search`;
   document.getElementById('btn-reset-alldata').innerHTML = `${icons.refresh} Reset`;
   document.getElementById('btn-export-alldata').innerHTML = `${icons.download} Export Filtered`;
+  document.getElementById('btn-export-domains').innerHTML = `${icons.globe} Export Domains`;
 
   // Biz/Loc titles
   document.getElementById('biz-title').innerHTML = `${icons.search} Business Categories`;
@@ -781,6 +782,50 @@ async function exportAllDataCSV() {
 
   btn.innerHTML = `${icons.download} Export Filtered`;
   btn.disabled = false;
+}
+
+async function exportDomainsCSV() {
+  const btn = document.getElementById('btn-export-domains');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  const search = document.getElementById('ad-search').value;
+  const city = document.getElementById('ad-city').value;
+  const category = document.getElementById('ad-category').value;
+  const query = document.getElementById('ad-query').value;
+  const min_rating = document.getElementById('ad-rating').value || 0;
+  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const phone_filter = document.getElementById('ad-phone-filter').value;
+  const website_filter = document.getElementById('ad-website-filter').value;
+  const address_filter = document.getElementById('ad-address-filter').value;
+
+  if (website_filter === 'none') {
+    toast('Website filter is set to "No Website" — there are no domains to export for this filter', 'error');
+    btn.innerHTML = `${icons.globe} Export Domains`;
+    btn.disabled = false;
+    return;
+  }
+
+  const params = new URLSearchParams({
+    search, query, city, category, min_rating, min_reviews,
+    phone_filter, website_filter, address_filter
+  });
+
+  let filename = 'domains';
+  if (city) filename += `_${city}`;
+  if (category) filename += `_${category}`;
+  if (min_rating > 0) filename += `_min${min_rating}`;
+
+  const a = document.createElement('a');
+  a.href = `/api/results/export-domains?${params.toString()}`;
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  btn.innerHTML = `${icons.globe} Export Domains`;
+  btn.disabled = false;
+  toast('Downloading unique domains list...', 'success');
 }
 
 function resetAllDataFilters() {
