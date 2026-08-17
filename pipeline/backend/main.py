@@ -1,7 +1,9 @@
 """Maps Scraping Pipeline — FastAPI Backend"""
 import json
+import re
 import time
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 import csv
 import io
@@ -658,6 +660,152 @@ def export_results_csv(
             csv_generator(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=export.csv"}
+        )
+    except Exception:
+        tx.rollback()
+        db.close()
+        raise
+
+
+def extract_domain(raw_url: str) -> str:
+    """
+    Extract a clean, bare domain (no protocol, no leading www., no path/query/fragment)
+    from a raw scraped website URL. Handles malformed source data gracefully:
+    - Missing/duplicated protocol prefixes (e.g. "https://https:example.com")
+    - Any number of leading "w" characters before a dot (e.g. "wwww.example.com")
+    - "www." appearing as a non-leading label (e.g. "use.www.example.com" -> keeps
+      the real registrable-looking tail, since stripping only a leading www. is safe
+      but a mid-string www. is part of the actual hostname and left as-is)
+    Returns "" if no usable domain can be derived.
+    """
+    if not raw_url:
+        return ""
+    url = raw_url.strip()
+    # Ensure urlsplit sees a scheme so netloc parses correctly; if it already has
+    # one (even a malformed doubled one) this is harmless since we only use netloc.
+    if "://" not in url:
+        url = "http://" + url
+    try:
+        netloc = urlsplit(url).netloc
+    except Exception:
+        netloc = ""
+    if not netloc:
+        # Fallback for URLs urlsplit couldn't parse at all
+        netloc = url.split("//")[-1].split("/")[0]
+    netloc = netloc.split("@")[-1]  # drop any userinfo (user:pass@)
+    netloc = netloc.split(":")[0]   # drop port
+    # Collapse any run of leading "w" characters immediately before a dot
+    # (e.g. "wwww." or "ww." -> "www." is NOT assumed; we simply strip them like www.)
+    netloc = re.sub(r"^w+\.", "", netloc, flags=re.IGNORECASE)
+    return netloc.strip().lower()
+
+
+@app.get("/api/results/export-domains")
+def export_domains_csv(
+    search: str = "",
+    query: str = "",
+    city: str = "",
+    state: str = "",
+    category: str = "",
+    min_rating: float = 0,
+    min_reviews: int = 0,
+    phone_only: bool = False,
+    no_phone: bool = False,
+    website_only: bool = False,
+    phone_filter: str = "all",
+    website_filter: str = "all",
+    address_filter: str = "all",
+):
+    """
+    Export ONLY the unique domain names (extracted from the website URL) for records
+    matching the current filters. Always implicitly filters to rows that have a website,
+    since a domain export is meaningless without one. Deduplicates domains in the output.
+    """
+    db = SessionLocal()
+    tx = db.begin()
+    try:
+        stmt = select(Business.website)
+
+        if search:
+            stmt = stmt.filter(sql_text(
+                "to_tsvector('english', coalesce(name,'') || ' ' || coalesce(address,'') || ' ' || coalesce(category,'')) "
+                "@@ plainto_tsquery('english', :search)"
+            ).bindparams(search=search))
+
+        if query:
+            stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
+        if city:
+            stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
+        if state:
+            stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
+        if category:
+            stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
+        if min_rating > 0:
+            stmt = stmt.filter(Business.rating >= min_rating)
+        if min_reviews > 0:
+            stmt = stmt.filter(Business.review_count >= min_reviews)
+
+        # Legacy compatibility mapping
+        if phone_only:
+            phone_filter = "has"
+        elif no_phone:
+            phone_filter = "none"
+
+        if phone_filter == "has":
+            stmt = stmt.filter(Business.phone != "", Business.phone.isnot(None))
+        elif phone_filter == "none":
+            stmt = stmt.filter((Business.phone == "") | (Business.phone.is_(None)))
+
+        if address_filter == "has":
+            stmt = stmt.filter(Business.address != "", Business.address.isnot(None))
+        elif address_filter == "none":
+            stmt = stmt.filter((Business.address == "") | (Business.address.is_(None)))
+
+        # A domain export only makes sense for rows that actually have a website.
+        # We honor an explicit website_filter=none by returning an empty result rather
+        # than silently ignoring the user's filter choice.
+        if website_filter == "none":
+            stmt = stmt.filter(sql_text("FALSE"))
+        else:
+            stmt = stmt.filter(Business.website != "", Business.website.isnot(None))
+
+        result = db.execute(stmt.execution_options(yield_per=10000))
+
+        def domain_generator():
+            seen = set()
+            try:
+                output = io.StringIO()
+                writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+                writer.writerow(["Domain"])
+                yield output.getvalue()
+                output.seek(0)
+                output.truncate(0)
+
+                for row in result:
+                    url = (row.website or "").strip()
+                    if not url:
+                        continue
+                    domain = extract_domain(url)
+                    if not domain or domain in seen:
+                        continue
+                    seen.add(domain)
+                    writer.writerow([domain])
+
+                    if output.tell() > 65536:
+                        yield output.getvalue()
+                        output.seek(0)
+                        output.truncate(0)
+
+                if output.tell() > 0:
+                    yield output.getvalue()
+            finally:
+                tx.close()
+                db.close()
+
+        return StreamingResponse(
+            domain_generator(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=domains.csv"}
         )
     except Exception:
         tx.rollback()
