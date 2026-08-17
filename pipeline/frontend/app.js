@@ -82,7 +82,10 @@ async function api(path, opts = {}) {
     const r = await fetch(path, { headers: {'Content-Type':'application/json'}, ...opts });
     if (!r.ok) return { error: `HTTP ${r.status}` };
     return await r.json();
-  } catch(e) { return { error: e.message }; }
+  } catch(e) {
+    if (e.name === 'AbortError') throw e; // let callers distinguish cancellation from real errors
+    return { error: e.message };
+  }
 }
 
 // ─── Navigation ─────────────────────────────────────────────────────────────
@@ -468,11 +471,24 @@ async function loadQueryResults() {
     limit: perPage, offset, search, city, category, min_rating, phone_only, no_phone, website_only,
     sort_by: resultsSort.by, sort_order: resultsSort.order, query: selectedQuery
   });
+
+  const searchBtn = document.getElementById('btn-search');
+  const tbody = document.getElementById('results-tbody');
+  const originalBtnHtml = searchBtn.innerHTML;
+  searchBtn.disabled = true;
+  searchBtn.innerHTML = `<span class="spinner"></span> Searching...`;
+  tbody.innerHTML = Array.from({length: 5}).map(() =>
+    `<tr class="skeleton-row"><td colspan="7"><div class="skeleton-bar"></div></td></tr>`
+  ).join('');
+
   const d = await api(`/api/results?${params}`);
-  document.getElementById('results-info').innerHTML = `<strong style="color:var(--primary);">${selectedQuery}</strong> — ${d.total || 0} results`;
+
+  searchBtn.disabled = false;
+  searchBtn.innerHTML = originalBtnHtml;
+
+  document.getElementById('results-info').innerHTML = `<strong style="color:var(--primary);">${selectedQuery}</strong> — ${(d.total || 0).toLocaleString()} results`;
   document.getElementById('results-thead').innerHTML = buildSortHeaders();
 
-  const tbody = document.getElementById('results-tbody');
   if (!d.results?.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px;">No results</td></tr>';
   } else {
@@ -626,6 +642,7 @@ function downloadCSV(results, filename) {
 
 // ─── All Data Page ──────────────────────────────────────────────────────────
 let allDataPage = 1;
+let allDataAbortController = null;
 
 async function loadAllData() {
   const search = document.getElementById('ad-search').value;
@@ -647,10 +664,46 @@ async function loadAllData() {
     phone_filter, website_filter, address_filter, sort_by, sort_order
   });
 
-  const d = await api(`/api/results?${params}`);
-  document.getElementById('alldata-info').textContent = `${d.total || 0} records found`;
+  // Cancel any in-flight search so filters don't race each other
+  if (allDataAbortController) allDataAbortController.abort();
+  allDataAbortController = new AbortController();
 
+  const searchBtn = document.getElementById('btn-search-alldata');
   const tbody = document.getElementById('alldata-tbody');
+  const info = document.getElementById('alldata-info');
+
+  searchBtn.disabled = true;
+  const originalBtnHtml = searchBtn.innerHTML;
+  searchBtn.innerHTML = `<span class="spinner"></span> Searching...`;
+  info.innerHTML = `<span class="spinner"></span> Filtering across all records — this can take a few seconds on large datasets...`;
+  tbody.innerHTML = Array.from({length: 6}).map(() =>
+    `<tr class="skeleton-row"><td colspan="8"><div class="skeleton-bar"></div></td></tr>`
+  ).join('');
+  document.getElementById('alldata-pagination').innerHTML = '';
+
+  let d;
+  try {
+    d = await api(`/api/results?${params}`, { signal: allDataAbortController.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') return; // superseded by a newer search
+    info.textContent = 'Search failed. Please try again.';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:24px;">Error loading results</td></tr>';
+    searchBtn.disabled = false;
+    searchBtn.innerHTML = originalBtnHtml;
+    return;
+  }
+
+  searchBtn.disabled = false;
+  searchBtn.innerHTML = originalBtnHtml;
+
+  if (d.error) {
+    info.textContent = 'Search failed. Please try again.';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:24px;">Error loading results</td></tr>';
+    return;
+  }
+
+  info.textContent = `${(d.total || 0).toLocaleString()} records found`;
+
   if (!d.results?.length) {
     tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:24px;">No records found</td></tr>';
   } else {

@@ -102,6 +102,14 @@ CREATE INDEX IF NOT EXISTS idx_biz_fts ON businesses
 CREATE INDEX IF NOT EXISTS idx_biz_hours ON businesses USING GIN (hours);
 CREATE INDEX IF NOT EXISTS idx_biz_reviews ON businesses USING GIN (reviews);
 
+-- Partial indexes for has/none filters (website, phone, address) — makes COUNT(*) instant
+CREATE INDEX IF NOT EXISTS idx_biz_has_website ON businesses(id) WHERE website IS NOT NULL AND website != '';
+CREATE INDEX IF NOT EXISTS idx_biz_no_website ON businesses(id) WHERE website IS NULL OR website = '';
+CREATE INDEX IF NOT EXISTS idx_biz_has_phone ON businesses(id) WHERE phone IS NOT NULL AND phone != '';
+CREATE INDEX IF NOT EXISTS idx_biz_no_phone ON businesses(id) WHERE phone IS NULL OR phone = '';
+CREATE INDEX IF NOT EXISTS idx_biz_has_address ON businesses(id) WHERE address IS NOT NULL AND address != '';
+CREATE INDEX IF NOT EXISTS idx_biz_no_address ON businesses(id) WHERE address IS NULL OR address = '';
+
 -- Scrape jobs
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON scrape_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON scrape_jobs(created_at DESC);

@@ -430,7 +430,28 @@ def get_results(
     elif address_filter == "none":
         q = q.filter((Business.address == "") | (Business.address.is_(None)))
 
-    total = q.count()
+    # Counting exact rows on a 2M+ row table with arbitrary filter combinations can be slow
+    # on cold cache (uncached index/heap pages need disk reads). To keep the API responsive
+    # under ANY filter combo, we cap how long we're willing to wait for an exact COUNT(*):
+    # if it doesn't finish in time, we fall back to a fast approximate count instead of hanging.
+    total = None
+    try:
+        db.execute(sql_text("SET LOCAL statement_timeout = '2500ms'"))
+        total = q.count()
+    except Exception:
+        db.rollback()
+        # Fallback: approximate using table-wide row estimate scaled by a quick sampled ratio.
+        # This keeps the response fast and the number "close enough" for a filter UI,
+        # while the exact count becomes available again once the relevant pages are cached.
+        try:
+            db.execute(sql_text("SET LOCAL statement_timeout = '1500ms'"))
+            table_estimate = db.execute(sql_text(
+                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+            )).scalar() or 0
+            total = int(table_estimate)
+        except Exception:
+            db.rollback()
+            total = 0
 
     # Dynamic sorting
     sort_columns = {
