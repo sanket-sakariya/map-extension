@@ -85,12 +85,41 @@ def _push_to_dlx(r, query: str, reason: str):
 
 # ─── Assignment Thread ──────────────────────────────────────────────────────
 
+_last_health_check = 0
+HEALTH_CHECK_INTERVAL = 60  # seconds between health checks
+
+
+def _health_check_scrapers(r):
+    """Ping each registered scraper's /api/v1/health endpoint. Remove dead ones."""
+    global _last_health_check
+    now = time.time()
+    if now - _last_health_check < HEALTH_CHECK_INTERVAL:
+        return
+    _last_health_check = now
+
+    scrapers = _get_scrapers(r)
+    for scraper in scrapers:
+        tunnel_url = scraper.get("tunnel_url")
+        if not tunnel_url:
+            continue
+        try:
+            resp = httpx.get(f"{tunnel_url}/api/v1/health", timeout=5)
+            if resp.status_code != 200:
+                _remove_dead_scraper(r, scraper)
+        except Exception:
+            # Connection refused/timeout = dead scraper
+            _remove_dead_scraper(r, scraper)
+
+
 def _assign_loop():
     global _running
     r = get_redis()
 
     while _running:
         try:
+            # Periodic health check to prune dead/expired scrapers
+            _health_check_scrapers(r)
+
             queue_len = r.llen("query_queue")
             if not queue_len:
                 time.sleep(1)
@@ -150,15 +179,27 @@ def _assign_loop():
 
 
 def _remove_dead_scraper(r, scraper: dict):
-    """Remove a dead scraper from the active set."""
+    """Remove a dead scraper from the active set (Redis + DB)."""
     tunnel_url = scraper.get("tunnel_url", "")
+    run_id = scraper.get("run_id")
     r.delete(f"scraper_busy:{tunnel_url}")
-    # Remove from set
+    # Remove from Redis set
     for member in r.smembers("active_scrapers"):
         try:
             data = json.loads(member)
             if data.get("tunnel_url") == tunnel_url:
                 r.srem("active_scrapers", member)
+        except:
+            pass
+    # Remove from DB
+    if run_id:
+        try:
+            from database import SessionLocal
+            from sqlalchemy import text as sql_text
+            db = SessionLocal()
+            db.execute(sql_text("DELETE FROM active_scrapers WHERE run_id = :rid"), {"rid": run_id})
+            db.commit()
+            db.close()
         except:
             pass
 
