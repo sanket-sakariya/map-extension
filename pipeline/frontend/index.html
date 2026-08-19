@@ -153,7 +153,7 @@
 
         <!-- Query-level filters (shown on query list) -->
         <div id="query-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
-          <input type="text" class="input" id="q-filter" placeholder="Filter by business, city, or keyword..." style="width:300px;" oninput="queryListPage=1;loadQueryList()">
+          <input type="text" class="input" id="q-filter" placeholder="Filter by business, city, or keyword..." style="width:300px;" oninput="debounceQueryFilter()">
           <select class="input" id="q-sort" style="width:140px;" onchange="queryListPage=1;loadQueryList()">
             <option value="date">Sort: Newest</option>
             <option value="count">Sort: Most Results</option>

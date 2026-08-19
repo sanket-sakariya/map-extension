@@ -342,21 +342,53 @@ def pipeline_status(db: Session = Depends(get_db)):
 
 
 @app.get("/api/results/queries")
-def get_result_queries(search: str = "", db: Session = Depends(get_db)):
-    """Get all unique queries with result counts. Optionally filter by search term."""
+def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort: str = "date", db: Session = Depends(get_db)):
+    """Get unique queries with result counts. Server-side paginated."""
+    # Get total count first (fast, uses pg_class estimate for unfiltered)
     if search:
-        rows = db.execute(sql_text(
-            "SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped "
-            "FROM businesses WHERE query ILIKE :search GROUP BY query ORDER BY MAX(scraped_at) DESC"
-        ), {"search": f"%{search}%"}).fetchall()
+        count_row = db.execute(sql_text(
+            "SELECT COUNT(DISTINCT query) FROM businesses WHERE query ILIKE :search"
+        ), {"search": f"%{search}%"}).scalar()
     else:
-        rows = db.execute(sql_text(
-            "SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped "
-            "FROM businesses GROUP BY query ORDER BY MAX(scraped_at) DESC"
-        )).fetchall()
+        count_row = db.execute(sql_text(
+            "SELECT (SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query')"
+        )).scalar()
+        if not count_row or count_row < 0:
+            count_row = db.execute(sql_text("SELECT COUNT(DISTINCT query) FROM businesses")).scalar()
+        count_row = int(abs(count_row)) if count_row else 0
+
+    # Get paginated results
+    order_clause = "ORDER BY MAX(scraped_at) DESC"
+    if sort == "count":
+        order_clause = "ORDER BY COUNT(*) DESC"
+    elif sort == "name":
+        order_clause = "ORDER BY query ASC"
+
+    if search:
+        rows = db.execute(sql_text(f"""
+            SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
+            FROM businesses WHERE query ILIKE :search
+            GROUP BY query {order_clause}
+            LIMIT :limit OFFSET :offset
+        """), {"search": f"%{search}%", "limit": limit, "offset": offset}).fetchall()
+    else:
+        rows = db.execute(sql_text(f"""
+            SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
+            FROM businesses
+            GROUP BY query {order_clause}
+            LIMIT :limit OFFSET :offset
+        """), {"limit": limit, "offset": offset}).fetchall()
+
+    # Total businesses (fast estimate from pg_class)
+    total_biz = db.execute(sql_text(
+        "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+    )).scalar() or 0
+
     return {
-        "total": len(rows),
-        "total_businesses": sum(r[1] for r in rows),
+        "total": int(count_row),
+        "total_businesses": int(total_biz),
+        "limit": limit,
+        "offset": offset,
         "queries": [{"query": r[0], "count": r[1], "last_scraped": str(r[2])} for r in rows]
     }
 
