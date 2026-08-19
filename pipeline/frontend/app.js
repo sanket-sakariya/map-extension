@@ -6,6 +6,13 @@ let allCategories = [];
 let allCities = [];
 let resultsPage = 1;
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+let _queryFilterTimer = null;
+function debounceQueryFilter() {
+  clearTimeout(_queryFilterTimer);
+  _queryFilterTimer = setTimeout(() => { queryListPage = 1; loadQueryList(); }, 400);
+}
+
 // ─── Auth ───────────────────────────────────────────────────────────────────
 function getToken() { return localStorage.getItem('mex_token') || ''; }
 function setToken(t) { localStorage.setItem('mex_token', t); }
@@ -386,35 +393,34 @@ async function loadResults() {
 }
 
 async function loadQueryList() {
-  const d = await api('/api/results/queries');
+  const filterText = document.getElementById('q-filter').value;
+  const sortBy = document.getElementById('q-sort').value;
+  const perPage = getPerPage();
+  const offset = (queryListPage - 1) * perPage;
+
   const tbody = document.getElementById('results-tbody');
   const info = document.getElementById('results-info');
   document.getElementById('results-filters').style.display = 'none';
   document.getElementById('results-back').style.display = 'none';
   document.getElementById('query-filters').style.display = 'flex';
 
+  info.innerHTML = `<span class="spinner"></span> Loading queries...`;
+  tbody.innerHTML = Array.from({length:5}).map(()=>`<tr class="skeleton-row"><td colspan="4"><div class="skeleton-bar"></div></td></tr>`).join('');
+
+  const params = new URLSearchParams({ search: filterText, limit: perPage, offset, sort: sortBy });
+  const d = await api(`/api/results/queries?${params}`);
+
   if (!d.queries?.length) {
-    info.textContent = 'No completed queries yet';
+    info.textContent = d.total ? 'No matching queries' : 'No scraped data yet';
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">No data scraped yet.</td></tr>';
     document.getElementById('pagination').innerHTML = '';
     return;
   }
 
-  const filterText = document.getElementById('q-filter').value.toLowerCase();
-  let queries = d.queries;
-  if (filterText) queries = queries.filter(q => q.query.toLowerCase().includes(filterText));
-  const sortBy = document.getElementById('q-sort').value;
-  if (sortBy === 'count') queries.sort((a, b) => b.count - a.count);
-  else if (sortBy === 'name') queries.sort((a, b) => a.query.localeCompare(b.query));
-
-  const perPage = getPerPage();
-  const totalPages = Math.ceil(queries.length / perPage);
-  const start = (queryListPage - 1) * perPage;
-  const pageQueries = queries.slice(start, start + perPage);
-
-  info.textContent = `${queries.length} of ${d.total} queries — ${d.total_businesses || 0} total businesses — page ${queryListPage}/${totalPages || 1}`;
+  const totalPages = Math.ceil((d.total || 0) / perPage);
+  info.textContent = `${(d.total||0).toLocaleString()} queries — ${(d.total_businesses||0).toLocaleString()} businesses — page ${queryListPage}/${totalPages}`;
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
-  tbody.innerHTML = pageQueries.map(q => `
+  tbody.innerHTML = d.queries.map(q => `
     <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
       <td style="font-weight:500;">${q.query}</td>
       <td><span class="tag tag-blue">${q.count}</span></td>
