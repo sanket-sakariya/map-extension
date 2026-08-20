@@ -344,45 +344,53 @@ def pipeline_status(db: Session = Depends(get_db)):
 @app.get("/api/results/queries")
 def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort: str = "date", db: Session = Depends(get_db)):
     """Get unique queries with result counts. Server-side paginated."""
-    # Get total count first (fast, uses pg_class estimate for unfiltered)
-    if search:
-        count_row = db.execute(sql_text(
-            "SELECT COUNT(DISTINCT query) FROM businesses WHERE query ILIKE :search"
-        ), {"search": f"%{search}%"}).scalar()
-    else:
-        count_row = db.execute(sql_text(
-            "SELECT (SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query')"
-        )).scalar()
-        if not count_row or count_row < 0:
-            count_row = db.execute(sql_text("SELECT COUNT(DISTINCT query) FROM businesses")).scalar()
-        count_row = int(abs(count_row)) if count_row else 0
+    # Total businesses (instant from pg_class)
+    total_biz = db.execute(sql_text(
+        "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+    )).scalar() or 0
 
-    # Get paginated results
-    order_clause = "ORDER BY MAX(scraped_at) DESC"
+    # Sort clause
+    order_clause = "ORDER BY last_scraped DESC"
     if sort == "count":
-        order_clause = "ORDER BY COUNT(*) DESC"
+        order_clause = "ORDER BY count DESC"
     elif sort == "name":
         order_clause = "ORDER BY query ASC"
 
     if search:
+        # For search: use query column with ILIKE (trigram index helps)
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
             FROM businesses WHERE query ILIKE :search
             GROUP BY query {order_clause}
             LIMIT :limit OFFSET :offset
         """), {"search": f"%{search}%", "limit": limit, "offset": offset}).fetchall()
+        # Approximate count: just use len(rows) if under limit, else estimate
+        if len(rows) < limit:
+            count_row = offset + len(rows)
+        else:
+            cr = db.execute(sql_text(
+                "SELECT COUNT(*) FROM (SELECT DISTINCT query FROM businesses WHERE query ILIKE :search LIMIT 10000) t"
+            ), {"search": f"%{search}%"}).scalar() or 0
+            count_row = cr
     else:
+        # Unfiltered: use n_distinct from pg_stats (instant)
+        nd = db.execute(sql_text(
+            "SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query'"
+        )).scalar()
+        # n_distinct > 0 means exact count; < 0 means fraction of rows
+        if nd and nd > 0:
+            count_row = int(nd)
+        elif nd and nd < 0:
+            count_row = int(abs(nd) * total_biz)
+        else:
+            count_row = 0
+
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
             FROM businesses
             GROUP BY query {order_clause}
             LIMIT :limit OFFSET :offset
         """), {"limit": limit, "offset": offset}).fetchall()
-
-    # Total businesses (fast estimate from pg_class)
-    total_biz = db.execute(sql_text(
-        "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
-    )).scalar() or 0
 
     return {
         "total": int(count_row),
@@ -469,23 +477,25 @@ def get_results(
     # under ANY filter combo, we cap how long we're willing to wait for an exact COUNT(*):
     # if it doesn't finish in time, we fall back to a fast approximate count instead of hanging.
     total = None
-    try:
-        db.execute(sql_text("SET LOCAL statement_timeout = '2500ms'"))
-        total = q.count()
-    except Exception:
-        db.rollback()
-        # Fallback: approximate using table-wide row estimate scaled by a quick sampled ratio.
-        # This keeps the response fast and the number "close enough" for a filter UI,
-        # while the exact count becomes available again once the relevant pages are cached.
+    if query and not search and not city and not category and min_rating <= 0 and min_reviews <= 0 and phone_filter == "all" and website_filter == "all" and address_filter == "all":
+        # Fast path: exact query match with idx_biz_query — always instant
+        total = db.execute(sql_text(
+            "SELECT COUNT(*) FROM businesses WHERE query = :q"
+        ), {"q": query}).scalar() or 0
+    else:
         try:
-            db.execute(sql_text("SET LOCAL statement_timeout = '1500ms'"))
-            table_estimate = db.execute(sql_text(
-                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
-            )).scalar() or 0
-            total = int(table_estimate)
+            db.execute(sql_text("SET LOCAL statement_timeout = '2500ms'"))
+            total = q.count()
         except Exception:
             db.rollback()
-            total = 0
+            try:
+                table_estimate = db.execute(sql_text(
+                    "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+                )).scalar() or 0
+                total = int(table_estimate)
+            except Exception:
+                db.rollback()
+                total = 0
 
     # Dynamic sorting
     sort_columns = {

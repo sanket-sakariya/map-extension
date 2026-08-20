@@ -420,13 +420,18 @@ async function loadQueryList() {
   const totalPages = Math.ceil((d.total || 0) / perPage);
   info.textContent = `${(d.total||0).toLocaleString()} queries — ${(d.total_businesses||0).toLocaleString()} businesses — page ${queryListPage}/${totalPages}`;
   document.getElementById('results-thead').innerHTML = '<tr><th>Query</th><th>Results</th><th>Last Scraped</th><th>Action</th></tr>';
-  tbody.innerHTML = d.queries.map(q => `
-    <tr style="cursor:pointer;" onclick="openQuery('${q.query.replace(/'/g, "\\'")}')">
+  tbody.innerHTML = d.queries.map((q, i) => `
+    <tr style="cursor:pointer;" data-query-idx="${i}">
       <td style="font-weight:500;">${q.query}</td>
       <td><span class="tag tag-blue">${q.count}</span></td>
       <td style="font-size:12px;color:var(--text-muted);">${new Date(q.last_scraped).toLocaleString()}</td>
-      <td><button class="btn btn-outline" style="padding:4px 10px;font-size:11px;" onclick="event.stopPropagation();openQuery('${q.query.replace(/'/g, "\\'")}')">${icons.chevronRight}</button></td>
+      <td><button class="btn btn-outline" style="padding:4px 10px;font-size:11px;">${icons.chevronRight}</button></td>
     </tr>`).join('');
+  // Attach click handlers safely (avoids quote-escaping issues with query names)
+  tbody.querySelectorAll('[data-query-idx]').forEach(row => {
+    const idx = parseInt(row.dataset.queryIdx);
+    row.addEventListener('click', () => openQuery(d.queries[idx].query));
+  });
   renderPag(totalPages, queryListPage, 'goQueryPage');
 }
 function goQueryPage(n) { queryListPage = n; loadQueryList(); }
@@ -437,10 +442,17 @@ function openQuery(query) {
   resultsSort = { by: 'rating', order: 'desc' };
   document.getElementById('query-filters').style.display = 'none';
   document.getElementById('results-filters').style.display = 'flex';
-  document.getElementById('results-back').style.display = 'flex';
+  document.getElementById('results-back').style.display = 'inline-flex';
   loadQueryResults();
 }
-function backToQueries() { selectedQuery = ''; loadQueryList(); }
+function backToQueries() {
+  selectedQuery = '';
+  resultsPage = 1;
+  document.getElementById('results-filters').style.display = 'none';
+  document.getElementById('results-back').style.display = 'none';
+  document.getElementById('query-filters').style.display = 'flex';
+  loadQueryList();
+}
 
 function sortCol(field) {
   if (resultsSort.by === field) resultsSort.order = resultsSort.order === 'desc' ? 'asc' : 'desc';
