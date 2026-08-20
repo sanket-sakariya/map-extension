@@ -382,17 +382,18 @@ def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort:
                 )).scalar() or 0
                 count_row = int(abs(nd)) if nd > 0 else 10000  # safe fallback
     else:
-        # Unfiltered: use n_distinct from pg_stats (instant)
-        nd = db.execute(sql_text(
-            "SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query'"
-        )).scalar()
-        # n_distinct > 0 means exact count; < 0 means fraction of rows
-        if nd and nd > 0:
-            count_row = int(nd)
-        elif nd and nd < 0:
-            count_row = int(abs(nd) * total_biz)
-        else:
-            count_row = 0
+        # Unfiltered: exact count with timeout fallback
+        try:
+            db.execute(sql_text("SET LOCAL statement_timeout = '5000ms'"))
+            count_row = db.execute(sql_text(
+                "SELECT COUNT(DISTINCT query) FROM businesses"
+            )).scalar() or 0
+        except Exception:
+            db.rollback()
+            # Fallback to reltuples-based estimate
+            count_row = db.execute(sql_text(
+                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+            )).scalar() or 0
 
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
