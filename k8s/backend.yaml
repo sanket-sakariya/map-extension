@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: backend
-        image: noasdaewplzc1305/map-extractor-backend:v12
+        image: noasdaewplzc1305/map-extractor-backend:v13
         imagePullPolicy: Always
         imagePullPolicy: Always
         ports:
