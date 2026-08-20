@@ -425,7 +425,7 @@ def get_results(
         ).bindparams(search=search))
 
     if query:
-        q = q.filter(Business.query.ilike(f"%{query}%"))
+        q = q.filter(Business.query == query)
     if city:
         q = q.filter(Business.city.ilike(f"%{city}%"))
     if state:
@@ -583,7 +583,7 @@ def export_results_csv(
             ).bindparams(search=search))
 
         if query:
-            stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
+            stmt = stmt.filter(Business.query == query)
         if city:
             stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
         if state:
@@ -765,7 +765,7 @@ def export_domains_csv(
             ).bindparams(search=search))
 
         if query:
-            stmt = stmt.filter(Business.query.ilike(f"%{query}%"))
+            stmt = stmt.filter(Business.query == query)
         if city:
             stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
         if state:
