@@ -357,21 +357,30 @@ def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort:
         order_clause = "ORDER BY query ASC"
 
     if search:
-        # For search: use query column with ILIKE (trigram index helps)
+        # For search: use query column with ILIKE (trigram GIN index helps)
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
             FROM businesses WHERE query ILIKE :search
             GROUP BY query {order_clause}
             LIMIT :limit OFFSET :offset
         """), {"search": f"%{search}%", "limit": limit, "offset": offset}).fetchall()
-        # Approximate count: just use len(rows) if under limit, else estimate
+        # Get count: use timeout-guarded exact count
         if len(rows) < limit:
             count_row = offset + len(rows)
         else:
-            cr = db.execute(sql_text(
-                "SELECT COUNT(*) FROM (SELECT DISTINCT query FROM businesses WHERE query ILIKE :search LIMIT 10000) t"
-            ), {"search": f"%{search}%"}).scalar() or 0
-            count_row = cr
+            try:
+                db.execute(sql_text("SET LOCAL statement_timeout = '4000ms'"))
+                cr = db.execute(sql_text(
+                    "SELECT COUNT(DISTINCT query) FROM businesses WHERE query ILIKE :search"
+                ), {"search": f"%{search}%"}).scalar() or 0
+                count_row = cr
+            except Exception:
+                db.rollback()
+                # Estimate: assume proportional to total queries
+                nd = db.execute(sql_text(
+                    "SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query'"
+                )).scalar() or 0
+                count_row = int(abs(nd)) if nd > 0 else 10000  # safe fallback
     else:
         # Unfiltered: use n_distinct from pg_stats (instant)
         nd = db.execute(sql_text(
