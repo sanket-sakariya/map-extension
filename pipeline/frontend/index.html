@@ -233,29 +233,35 @@
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Min Reviews</label>
             <input type="number" class="input" id="ad-reviews" placeholder="Min reviews" style="width:100%;" min="0">
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Phone Filter</label>
-            <select class="input" id="ad-phone-filter" style="width:100%;">
-              <option value="all">All (With/Without)</option>
-              <option value="has">Has Phone</option>
-              <option value="none">No Phone</option>
-            </select>
+            <input type="text" class="input" id="ad-phone-filter" value="All (With/Without)" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('phone-filter')">
+            <input type="hidden" id="ad-phone-filter-value" value="all">
+            <div class="search-dropdown" id="dropdown-phone-filter" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('phone-filter','all','All (With/Without)')"><span>All (With/Without)</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('phone-filter','has','Has Phone')"><span>Has Phone</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('phone-filter','none','No Phone')"><span>No Phone</span></div>
+            </div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Website Filter</label>
-            <select class="input" id="ad-website-filter" style="width:100%;">
-              <option value="all">All (With/Without)</option>
-              <option value="has">Has Website</option>
-              <option value="none">No Website</option>
-            </select>
+            <input type="text" class="input" id="ad-website-filter" value="All (With/Without)" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('website-filter')">
+            <input type="hidden" id="ad-website-filter-value" value="all">
+            <div class="search-dropdown" id="dropdown-website-filter" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('website-filter','all','All (With/Without)')"><span>All (With/Without)</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('website-filter','has','Has Website')"><span>Has Website</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('website-filter','none','No Website')"><span>No Website</span></div>
+            </div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Address Filter</label>
-            <select class="input" id="ad-address-filter" style="width:100%;">
-              <option value="all">All (With/Without)</option>
-              <option value="has">Has Address</option>
-              <option value="none">No Address</option>
-            </select>
+            <input type="text" class="input" id="ad-address-filter" value="All (With/Without)" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('address-filter')">
+            <input type="hidden" id="ad-address-filter-value" value="all">
+            <div class="search-dropdown" id="dropdown-address-filter" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('address-filter','all','All (With/Without)')"><span>All (With/Without)</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('address-filter','has','Has Address')"><span>Has Address</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('address-filter','none','No Address')"><span>No Address</span></div>
+            </div>
           </div>
           <div class="input-group" style="margin:0;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort By</label>
