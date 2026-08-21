@@ -729,6 +729,25 @@ function selectDropdown(type, value) {
   document.getElementById(`dropdown-${type}`).style.display = 'none';
 }
 
+function showStaticDropdown(type) {
+  const dd = document.getElementById(`dropdown-${type}`);
+  dd.style.display = 'block';
+  setTimeout(() => {
+    document.addEventListener('click', function _close(e) {
+      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== `ad-${type}`) {
+        dd.style.display = 'none';
+        document.removeEventListener('click', _close);
+      }
+    });
+  }, 10);
+}
+
+function selectStaticDropdown(type, value, label) {
+  document.getElementById(`ad-${type}`).value = label;
+  document.getElementById(`ad-${type}-value`).value = value;
+  document.getElementById(`dropdown-${type}`).style.display = 'none';
+}
+
 async function loadAllData() {
   if (!_dbCategoriesLoaded) loadDbCategories();
   if (!_dbCitiesLoaded) loadDbCities();
@@ -738,9 +757,9 @@ async function loadAllData() {
   const query = document.getElementById('ad-query').value;
   const min_rating = document.getElementById('ad-rating').value || 0;
   const min_reviews = document.getElementById('ad-reviews').value || 0;
-  const phone_filter = document.getElementById('ad-phone-filter').value;
-  const website_filter = document.getElementById('ad-website-filter').value;
-  const address_filter = document.getElementById('ad-address-filter').value;
+  const phone_filter = document.getElementById('ad-phone-filter-value').value;
+  const website_filter = document.getElementById('ad-website-filter-value').value;
+  const address_filter = document.getElementById('ad-address-filter-value').value;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
   const perPage = parseInt(document.getElementById('ad-per-page').value);
@@ -840,9 +859,9 @@ async function exportAllDataCSV() {
   const query = document.getElementById('ad-query').value;
   const min_rating = document.getElementById('ad-rating').value || 0;
   const min_reviews = document.getElementById('ad-reviews').value || 0;
-  const phone_filter = document.getElementById('ad-phone-filter').value;
-  const website_filter = document.getElementById('ad-website-filter').value;
-  const address_filter = document.getElementById('ad-address-filter').value;
+  const phone_filter = document.getElementById('ad-phone-filter-value').value;
+  const website_filter = document.getElementById('ad-website-filter-value').value;
+  const address_filter = document.getElementById('ad-address-filter-value').value;
   const sort_by = document.getElementById('ad-sort').value;
   const sort_order = document.getElementById('ad-order').value;
 
@@ -881,9 +900,9 @@ async function exportDomainsCSV() {
   const query = document.getElementById('ad-query').value;
   const min_rating = document.getElementById('ad-rating').value || 0;
   const min_reviews = document.getElementById('ad-reviews').value || 0;
-  const phone_filter = document.getElementById('ad-phone-filter').value;
-  const website_filter = document.getElementById('ad-website-filter').value;
-  const address_filter = document.getElementById('ad-address-filter').value;
+  const phone_filter = document.getElementById('ad-phone-filter-value').value;
+  const website_filter = document.getElementById('ad-website-filter-value').value;
+  const address_filter = document.getElementById('ad-address-filter-value').value;
 
   if (website_filter === 'none') {
     toast('Website filter is set to "No Website" — there are no domains to export for this filter', 'error');
@@ -921,9 +940,12 @@ function resetAllDataFilters() {
   document.getElementById('ad-query').value = '';
   document.getElementById('ad-rating').value = '';
   document.getElementById('ad-reviews').value = '';
-  document.getElementById('ad-phone-filter').value = 'all';
-  document.getElementById('ad-website-filter').value = 'all';
-  document.getElementById('ad-address-filter').value = 'all';
+  document.getElementById('ad-phone-filter-value').value = 'all';
+  document.getElementById('ad-website-filter-value').value = 'all';
+  document.getElementById('ad-address-filter-value').value = 'all';
+  document.getElementById('ad-phone-filter').value = 'All (With/Without)';
+  document.getElementById('ad-website-filter').value = 'All (With/Without)';
+  document.getElementById('ad-address-filter').value = 'All (With/Without)';
   document.getElementById('ad-sort').value = 'rating';
   document.getElementById('ad-order').value = 'desc';
   allDataPage = 1;
