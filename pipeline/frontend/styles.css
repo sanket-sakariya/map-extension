@@ -370,3 +370,33 @@ tr:hover td { background: var(--primary-50); }
   .stepper { flex-wrap: wrap; gap: 4px; }
   .step-line { width: 20px; }
 }
+
+/* Searchable dropdown */
+.search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 100;
+  margin-top: 2px;
+}
+.search-dropdown .dd-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+.search-dropdown .dd-item:last-child { border-bottom: none; }
+.search-dropdown .dd-item:hover { background: var(--primary-50); }
+.search-dropdown .dd-item.active { background: var(--primary-50); color: var(--primary); font-weight: 600; }
+.search-dropdown .dd-item .dd-count { font-size: 11px; color: var(--text-muted); }
+.search-dropdown .dd-empty { padding: 12px; text-align: center; color: var(--text-muted); font-size: 12px; }

@@ -311,6 +311,26 @@ def get_db_categories(db: Session = Depends(get_db)):
     return result
 
 
+@app.get("/api/db-cities")
+def get_db_cities(db: Session = Depends(get_db)):
+    """Return distinct cities from scraped businesses (cached in Redis 1hr)."""
+    r = get_redis()
+    cached = r.get("cache:db_cities")
+    if cached:
+        import json as _json
+        return _json.loads(cached)
+
+    rows = db.execute(sql_text(
+        "SELECT city, COUNT(*) as cnt FROM businesses "
+        "WHERE city IS NOT NULL AND city != '' "
+        "GROUP BY city ORDER BY cnt DESC"
+    )).fetchall()
+    result = {"count": len(rows), "cities": [{"name": r[0], "count": r[1]} for r in rows]}
+    import json as _json
+    r.set("cache:db_cities", _json.dumps(result), ex=3600)
+    return result
+
+
 @app.get("/api/countries")
 def get_countries():
     """Return all 249 countries."""
