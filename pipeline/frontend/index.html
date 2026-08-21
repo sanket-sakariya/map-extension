@@ -109,11 +109,18 @@
           <div>
             <div class="card-title" id="loc-title"></div>
             <div class="grid-2" style="gap:8px;margin-bottom:8px;">
-              <select class="input" id="country" onchange="loadCities()" style="margin:0;"></select>
-              <select class="input" id="modifier" style="margin:0;">
-                <option value="in">in</option>
-                <option value="near">near</option>
-              </select>
+              <div style="position:relative;display:inline-block;flex:1;">
+                <input type="text" class="input" id="country" placeholder="Search country..." style="margin:0;" autocomplete="off" onfocus="showDropdown('country')" oninput="filterDropdown('country')">
+                <div class="search-dropdown" id="dropdown-country" style="display:none;"></div>
+              </div>
+              <div style="position:relative;display:inline-block;flex:1;">
+                <input type="text" class="input" id="modifier" value="in" readonly style="margin:0;cursor:pointer;text-align:center;" onclick="showStaticDropdown('modifier')">
+                <input type="hidden" id="modifier-value" value="in">
+                <div class="search-dropdown" id="dropdown-modifier" style="display:none;min-width:80px;">
+                  <div class="dd-item" onclick="selectStaticDropdown('modifier','in','in')"><span>in</span></div>
+                  <div class="dd-item" onclick="selectStaticDropdown('modifier','near','near')"><span>near</span></div>
+                </div>
+              </div>
             </div>
             <input type="text" class="input" placeholder="Filter cities..." oninput="filterList('locations', this.value)">
             <select class="input" id="locations" multiple size="8"></select>
@@ -154,11 +161,15 @@
         <!-- Query-level filters (shown on query list) -->
         <div id="query-filters" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
           <input type="text" class="input" id="q-filter" placeholder="Filter by business, city, or keyword..." style="width:300px;" oninput="debounceQueryFilter()">
-          <select class="input" id="q-sort" style="width:140px;" onchange="queryListPage=1;loadQueryList()">
-            <option value="date">Sort: Newest</option>
-            <option value="count">Sort: Most Results</option>
-            <option value="name">Sort: Name A-Z</option>
-          </select>
+          <div style="position:relative;display:inline-block;">
+            <input type="text" class="input" id="q-sort" value="Sort: Newest" readonly style="width:160px;cursor:pointer;" onclick="showStaticDropdown('q-sort')">
+            <input type="hidden" id="q-sort-value" value="date">
+            <div class="search-dropdown" id="dropdown-q-sort" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('q-sort','date','Sort: Newest');queryListPage=1;loadQueryList()"><span>Sort: Newest</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('q-sort','count','Sort: Most Results');queryListPage=1;loadQueryList()"><span>Sort: Most Results</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('q-sort','name','Sort: Name A-Z');queryListPage=1;loadQueryList()"><span>Sort: Name A-Z</span></div>
+            </div>
+          </div>
         </div>
 
         <!-- Detail-level filters (shown when viewing a specific query's results) -->
@@ -184,12 +195,16 @@
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;">
           <div style="display:flex;align-items:center;gap:6px;">
             <label style="font-size:12px;color:var(--text-muted);">Per page:</label>
-            <select class="input" id="r-per-page" style="width:70px;margin:0;" onchange="changePerPage()">
-              <option value="10">10</option>
-              <option value="25" selected>25</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
+            <div style="position:relative;display:inline-block;">
+              <input type="text" class="input" id="r-per-page" value="25" readonly style="width:60px;cursor:pointer;text-align:center;" onclick="showStaticDropdown('r-per-page')">
+              <input type="hidden" id="r-per-page-value" value="25">
+              <div class="search-dropdown" id="dropdown-r-per-page" style="display:none;min-width:60px;">
+                <div class="dd-item" onclick="selectStaticDropdown('r-per-page','10','10');changePerPage()"><span>10</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('r-per-page','25','25');changePerPage()"><span>25</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('r-per-page','50','50');changePerPage()"><span>50</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('r-per-page','100','100');changePerPage()"><span>100</span></div>
+              </div>
+            </div>
           </div>
           <div class="pagination" id="pagination"></div>
         </div>
@@ -320,12 +335,16 @@
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;">
           <div style="display:flex;align-items:center;gap:6px;">
             <label style="font-size:12px;color:var(--text-muted);">Per page:</label>
-            <select class="input" id="ad-per-page" style="width:70px;margin:0;" onchange="allDataPage=1;loadAllData()">
-              <option value="10">10</option>
-              <option value="25" selected>25</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
+            <div style="position:relative;display:inline-block;">
+              <input type="text" class="input" id="ad-per-page" value="25" readonly style="width:60px;cursor:pointer;text-align:center;" onclick="showStaticDropdown('ad-per-page')">
+              <input type="hidden" id="ad-per-page-value" value="25">
+              <div class="search-dropdown" id="dropdown-ad-per-page" style="display:none;min-width:60px;">
+                <div class="dd-item" onclick="selectStaticDropdown('ad-per-page','10','10');allDataPage=1;loadAllData()"><span>10</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('ad-per-page','25','25');allDataPage=1;loadAllData()"><span>25</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('ad-per-page','50','50');allDataPage=1;loadAllData()"><span>50</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('ad-per-page','100','100');allDataPage=1;loadAllData()"><span>100</span></div>
+              </div>
+            </div>
           </div>
           <div class="pagination" id="alldata-pagination"></div>
         </div>

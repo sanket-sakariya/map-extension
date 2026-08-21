@@ -4,6 +4,7 @@ let currentStep = 1;
 let queryMode = 'one_biz_all_loc';
 let allCategories = [];
 let allCities = [];
+let _allCountries = [];
 let resultsPage = 1;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -291,11 +292,9 @@ async function loadCategories() {
 
 async function loadCountries() {
   const d = await api('/api/countries');
-  const sel = document.getElementById('country');
   if (d.countries?.length) {
-    sel.innerHTML = '<option value="">Select country...</option>' + d.countries.map(c => `<option value="${c}">${c}</option>`).join('');
+    _allCountries = d.countries;
   } else {
-    sel.innerHTML = '<option value="">Failed to load</option>';
     setTimeout(loadCountries, 3000);
   }
 }
@@ -354,7 +353,7 @@ async function generateQueries() {
 
   const businesses = Array.from(document.getElementById('businesses').selectedOptions).map(o => o.value);
   const locations = Array.from(document.getElementById('locations').selectedOptions).map(o => o.value);
-  const modifier = document.getElementById('modifier').value;
+  const modifier = document.getElementById('modifier-value').value;
 
   if (!businesses.length || !locations.length) {
     toast('Select at least one business and one location', 'error');
@@ -384,7 +383,7 @@ let selectedQuery = '';
 let queryListPage = 1;
 let resultsSort = { by: 'rating', order: 'desc' };
 
-function getPerPage() { return parseInt(document.getElementById('r-per-page')?.value || 25); }
+function getPerPage() { return parseInt(document.getElementById('r-per-page-value')?.value || 25); }
 function changePerPage() { resultsPage = 1; queryListPage = 1; loadResults(); }
 
 async function loadResults() {
@@ -394,7 +393,7 @@ async function loadResults() {
 
 async function loadQueryList() {
   const filterText = document.getElementById('q-filter').value;
-  const sortBy = document.getElementById('q-sort').value;
+  const sortBy = document.getElementById('q-sort-value').value;
   const perPage = getPerPage();
   const offset = (queryListPage - 1) * perPage;
 
@@ -689,10 +688,10 @@ function showDropdown(type) {
   const dd = document.getElementById(`dropdown-${type}`);
   dd.style.display = 'block';
   filterDropdown(type);
-  // Close on outside click
+  const inputId = document.getElementById(`ad-${type}`) ? `ad-${type}` : type;
   setTimeout(() => {
     document.addEventListener('click', function _close(e) {
-      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== `ad-${type}`) {
+      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== inputId) {
         dd.style.display = 'none';
         document.removeEventListener('click', _close);
       }
@@ -701,10 +700,14 @@ function showDropdown(type) {
 }
 
 function filterDropdown(type) {
-  const input = document.getElementById(`ad-${type}`);
+  const input = document.getElementById(`ad-${type}`) || document.getElementById(type);
   const dd = document.getElementById(`dropdown-${type}`);
   const search = input.value.toLowerCase();
-  const items = type === 'category' ? _dbCategories : _dbCities;
+  let items;
+  if (type === 'category') items = _dbCategories;
+  else if (type === 'city') items = _dbCities;
+  else if (type === 'country') items = _allCountries.map(c => ({name: c, count: null}));
+  else items = [];
 
   if (!items.length) {
     dd.innerHTML = '<div class="dd-empty">Loading...</div>';
@@ -719,14 +722,16 @@ function filterDropdown(type) {
     return;
   }
 
-  dd.innerHTML = `<div class="dd-item" onclick="selectDropdown('${type}','')"><span style="color:var(--text-muted);">All ${type === 'category' ? 'Categories' : 'Cities'}</span></div>` +
-    shown.map(i => `<div class="dd-item" onclick="selectDropdown('${type}','${i.name.replace(/'/g, "\\'")}')"><span>${i.name}</span><span class="dd-count">${i.count.toLocaleString()}</span></div>`).join('');
+  const allLabel = type === 'category' ? 'All Categories' : type === 'city' ? 'All Cities' : 'Select country...';
+  dd.innerHTML = (type !== 'country' ? `<div class="dd-item" onclick="selectDropdown('${type}','')"><span style="color:var(--text-muted);">${allLabel}</span></div>` : '') +
+    shown.map(i => `<div class="dd-item" onclick="selectDropdown('${type}','${i.name.replace(/'/g, "\\'")}')"><span>${i.name}</span>${i.count !== null ? `<span class="dd-count">${i.count.toLocaleString()}</span>` : ''}</div>`).join('');
 }
 
 function selectDropdown(type, value) {
-  const input = document.getElementById(`ad-${type}`);
+  const input = document.getElementById(`ad-${type}`) || document.getElementById(type);
   input.value = value;
   document.getElementById(`dropdown-${type}`).style.display = 'none';
+  if (type === 'country' && value) loadCities();
 }
 
 function showStaticDropdown(type) {
@@ -762,7 +767,7 @@ async function loadAllData() {
   const address_filter = document.getElementById('ad-address-filter-value').value;
   const sort_by = document.getElementById('ad-sort-value').value;
   const sort_order = document.getElementById('ad-order-value').value;
-  const perPage = parseInt(document.getElementById('ad-per-page').value);
+  const perPage = parseInt(document.getElementById('ad-per-page-value').value);
   const offset = (allDataPage - 1) * perPage;
 
   const params = new URLSearchParams({
