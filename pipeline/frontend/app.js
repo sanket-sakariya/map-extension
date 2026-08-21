@@ -755,13 +755,13 @@ async function loadAllData() {
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
   const query = document.getElementById('ad-query').value;
-  const min_rating = document.getElementById('ad-rating').value || 0;
-  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const min_rating = document.getElementById('ad-rating-value').value || 0;
+  const min_reviews = document.getElementById('ad-reviews-value').value || 0;
   const phone_filter = document.getElementById('ad-phone-filter-value').value;
   const website_filter = document.getElementById('ad-website-filter-value').value;
   const address_filter = document.getElementById('ad-address-filter-value').value;
-  const sort_by = document.getElementById('ad-sort').value;
-  const sort_order = document.getElementById('ad-order').value;
+  const sort_by = document.getElementById('ad-sort-value').value;
+  const sort_order = document.getElementById('ad-order-value').value;
   const perPage = parseInt(document.getElementById('ad-per-page').value);
   const offset = (allDataPage - 1) * perPage;
 
@@ -857,13 +857,13 @@ async function exportAllDataCSV() {
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
   const query = document.getElementById('ad-query').value;
-  const min_rating = document.getElementById('ad-rating').value || 0;
-  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const min_rating = document.getElementById('ad-rating-value').value || 0;
+  const min_reviews = document.getElementById('ad-reviews-value').value || 0;
   const phone_filter = document.getElementById('ad-phone-filter-value').value;
   const website_filter = document.getElementById('ad-website-filter-value').value;
   const address_filter = document.getElementById('ad-address-filter-value').value;
-  const sort_by = document.getElementById('ad-sort').value;
-  const sort_order = document.getElementById('ad-order').value;
+  const sort_by = document.getElementById('ad-sort-value').value;
+  const sort_order = document.getElementById('ad-order-value').value;
 
   const params = new URLSearchParams({
     search, query, city, category, min_rating, min_reviews,
@@ -898,8 +898,8 @@ async function exportDomainsCSV() {
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
   const query = document.getElementById('ad-query').value;
-  const min_rating = document.getElementById('ad-rating').value || 0;
-  const min_reviews = document.getElementById('ad-reviews').value || 0;
+  const min_rating = document.getElementById('ad-rating-value').value || 0;
+  const min_reviews = document.getElementById('ad-reviews-value').value || 0;
   const phone_filter = document.getElementById('ad-phone-filter-value').value;
   const website_filter = document.getElementById('ad-website-filter-value').value;
   const address_filter = document.getElementById('ad-address-filter-value').value;
@@ -938,16 +938,20 @@ function resetAllDataFilters() {
   document.getElementById('ad-city').value = '';
   document.getElementById('ad-category').value = '';
   document.getElementById('ad-query').value = '';
-  document.getElementById('ad-rating').value = '';
-  document.getElementById('ad-reviews').value = '';
+  document.getElementById('ad-rating-value').value = '';
+  document.getElementById('ad-reviews-value').value = '';
   document.getElementById('ad-phone-filter-value').value = 'all';
   document.getElementById('ad-website-filter-value').value = 'all';
   document.getElementById('ad-address-filter-value').value = 'all';
+  document.getElementById('ad-rating').value = 'Any Rating';
+  document.getElementById('ad-reviews').value = 'Any Reviews';
   document.getElementById('ad-phone-filter').value = 'All (With/Without)';
   document.getElementById('ad-website-filter').value = 'All (With/Without)';
   document.getElementById('ad-address-filter').value = 'All (With/Without)';
-  document.getElementById('ad-sort').value = 'rating';
-  document.getElementById('ad-order').value = 'desc';
+  document.getElementById('ad-sort-value').value = 'rating';
+  document.getElementById('ad-order-value').value = 'desc';
+  document.getElementById('ad-sort').value = 'Rating';
+  document.getElementById('ad-order').value = 'Descending';
   allDataPage = 1;
   loadAllData();
 }

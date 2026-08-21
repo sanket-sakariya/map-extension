@@ -225,13 +225,31 @@
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Scraped Query</label>
             <input type="text" class="input" id="ad-query" placeholder="e.g. plumber in new york" style="width:100%;">
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Min Rating</label>
-            <input type="number" class="input" id="ad-rating" placeholder="Min rating" style="width:100%;" step="0.5" min="0" max="5">
+            <input type="text" class="input" id="ad-rating" value="Any Rating" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('rating')">
+            <input type="hidden" id="ad-rating-value" value="">
+            <div class="search-dropdown" id="dropdown-rating" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('rating','','Any Rating')"><span>Any Rating</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('rating','3','3+ Stars')"><span>3+ Stars</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('rating','3.5','3.5+ Stars')"><span>3.5+ Stars</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('rating','4','4+ Stars')"><span>4+ Stars</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('rating','4.5','4.5+ Stars')"><span>4.5+ Stars</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('rating','5','5 Stars Only')"><span>5 Stars Only</span></div>
+            </div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Min Reviews</label>
-            <input type="number" class="input" id="ad-reviews" placeholder="Min reviews" style="width:100%;" min="0">
+            <input type="text" class="input" id="ad-reviews" value="Any Reviews" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('reviews')">
+            <input type="hidden" id="ad-reviews-value" value="">
+            <div class="search-dropdown" id="dropdown-reviews" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','','Any Reviews')"><span>Any Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','5','5+ Reviews')"><span>5+ Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','10','10+ Reviews')"><span>10+ Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','25','25+ Reviews')"><span>25+ Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','50','50+ Reviews')"><span>50+ Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('reviews','100','100+ Reviews')"><span>100+ Reviews</span></div>
+            </div>
           </div>
           <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Phone Filter</label>
@@ -263,22 +281,26 @@
               <div class="dd-item" onclick="selectStaticDropdown('address-filter','none','No Address')"><span>No Address</span></div>
             </div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort By</label>
-            <select class="input" id="ad-sort" style="width:100%;">
-              <option value="rating">Rating</option>
-              <option value="reviews">Reviews</option>
-              <option value="name">Name</option>
-              <option value="date">Newest</option>
-              <option value="city">City</option>
-            </select>
+            <input type="text" class="input" id="ad-sort" value="Rating" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('sort')">
+            <input type="hidden" id="ad-sort-value" value="rating">
+            <div class="search-dropdown" id="dropdown-sort" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('sort','rating','Rating')"><span>Rating</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('sort','reviews','Reviews')"><span>Reviews</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('sort','name','Name')"><span>Name</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('sort','date','Newest')"><span>Newest</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('sort','city','City')"><span>City</span></div>
+            </div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort Order</label>
-            <select class="input" id="ad-order" style="width:100%;">
-              <option value="desc">Descending</option>
-              <option value="asc">Ascending</option>
-            </select>
+            <input type="text" class="input" id="ad-order" value="Descending" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('order')">
+            <input type="hidden" id="ad-order-value" value="desc">
+            <div class="search-dropdown" id="dropdown-order" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('order','desc','Descending')"><span>Descending</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('order','asc','Ascending')"><span>Ascending</span></div>
+            </div>
           </div>
         </div>
 
