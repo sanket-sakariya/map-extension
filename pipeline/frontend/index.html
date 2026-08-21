@@ -209,15 +209,17 @@
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Search Name/Address</label>
             <input type="text" class="input" id="ad-search" placeholder="e.g. plumber, beauty" style="width:100%;">
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">City</label>
-            <input type="text" class="input" id="ad-city" placeholder="e.g. Rajkot" style="width:100%;">
+            <input type="text" class="input" id="ad-city" placeholder="Search city..." style="width:100%;" autocomplete="off" onfocus="showDropdown('city')" oninput="filterDropdown('city')">
+            <input type="hidden" id="ad-city-value">
+            <div class="search-dropdown" id="dropdown-city" style="display:none;"></div>
           </div>
-          <div class="input-group" style="margin:0;">
+          <div class="input-group" style="margin:0;position:relative;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Category</label>
-            <select class="input" id="ad-category" style="width:100%;">
-              <option value="">All Categories</option>
-            </select>
+            <input type="text" class="input" id="ad-category" placeholder="Search category..." style="width:100%;" autocomplete="off" onfocus="showDropdown('category')" oninput="filterDropdown('category')">
+            <input type="hidden" id="ad-category-value">
+            <div class="search-dropdown" id="dropdown-category" style="display:none;"></div>
           </div>
           <div class="input-group" style="margin:0;">
             <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Scraped Query</label>

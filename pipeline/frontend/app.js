@@ -663,20 +663,75 @@ function downloadCSV(results, filename) {
 let allDataPage = 1;
 let allDataAbortController = null;
 let _dbCategoriesLoaded = false;
+let _dbCitiesLoaded = false;
+let _dbCategories = [];
+let _dbCities = [];
 
 async function loadDbCategories() {
   if (_dbCategoriesLoaded) return;
-  const sel = document.getElementById('ad-category');
   const d = await api('/api/db-categories');
   if (d.categories?.length) {
-    sel.innerHTML = '<option value="">All Categories</option>' +
-      d.categories.map(c => `<option value="${c.name}">${c.name} (${c.count.toLocaleString()})</option>`).join('');
+    _dbCategories = d.categories;
     _dbCategoriesLoaded = true;
   }
 }
 
+async function loadDbCities() {
+  if (_dbCitiesLoaded) return;
+  const d = await api('/api/db-cities');
+  if (d.cities?.length) {
+    _dbCities = d.cities;
+    _dbCitiesLoaded = true;
+  }
+}
+
+function showDropdown(type) {
+  const dd = document.getElementById(`dropdown-${type}`);
+  dd.style.display = 'block';
+  filterDropdown(type);
+  // Close on outside click
+  setTimeout(() => {
+    document.addEventListener('click', function _close(e) {
+      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== `ad-${type}`) {
+        dd.style.display = 'none';
+        document.removeEventListener('click', _close);
+      }
+    });
+  }, 10);
+}
+
+function filterDropdown(type) {
+  const input = document.getElementById(`ad-${type}`);
+  const dd = document.getElementById(`dropdown-${type}`);
+  const search = input.value.toLowerCase();
+  const items = type === 'category' ? _dbCategories : _dbCities;
+
+  if (!items.length) {
+    dd.innerHTML = '<div class="dd-empty">Loading...</div>';
+    return;
+  }
+
+  const filtered = search ? items.filter(i => i.name.toLowerCase().includes(search)) : items;
+  const shown = filtered.slice(0, 100); // show max 100 for performance
+
+  if (!shown.length) {
+    dd.innerHTML = '<div class="dd-empty">No matches</div>';
+    return;
+  }
+
+  dd.innerHTML = `<div class="dd-item" onclick="selectDropdown('${type}','')"><span style="color:var(--text-muted);">All ${type === 'category' ? 'Categories' : 'Cities'}</span></div>` +
+    shown.map(i => `<div class="dd-item" onclick="selectDropdown('${type}','${i.name.replace(/'/g, "\\'")}')"><span>${i.name}</span><span class="dd-count">${i.count.toLocaleString()}</span></div>`).join('');
+}
+
+function selectDropdown(type, value) {
+  const input = document.getElementById(`ad-${type}`);
+  input.value = value;
+  document.getElementById(`dropdown-${type}`).style.display = 'none';
+}
+
 async function loadAllData() {
   if (!_dbCategoriesLoaded) loadDbCategories();
+  if (!_dbCitiesLoaded) loadDbCities();
   const search = document.getElementById('ad-search').value;
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
