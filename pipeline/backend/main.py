@@ -291,6 +291,26 @@ def get_categories():
     return {"count": len(cats), "categories": cats}
 
 
+@app.get("/api/db-categories")
+def get_db_categories(db: Session = Depends(get_db)):
+    """Return distinct categories from scraped businesses (cached in Redis 1hr)."""
+    r = get_redis()
+    cached = r.get("cache:db_categories")
+    if cached:
+        import json as _json
+        return _json.loads(cached)
+
+    rows = db.execute(sql_text(
+        "SELECT category, COUNT(*) as cnt FROM businesses "
+        "WHERE category IS NOT NULL AND category != '' "
+        "GROUP BY category ORDER BY cnt DESC"
+    )).fetchall()
+    result = {"count": len(rows), "categories": [{"name": r[0], "count": r[1]} for r in rows]}
+    import json as _json
+    r.set("cache:db_categories", _json.dumps(result), ex=3600)
+    return result
+
+
 @app.get("/api/countries")
 def get_countries():
     """Return all 249 countries."""
