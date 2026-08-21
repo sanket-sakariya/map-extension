@@ -662,8 +662,21 @@ function downloadCSV(results, filename) {
 // ─── All Data Page ──────────────────────────────────────────────────────────
 let allDataPage = 1;
 let allDataAbortController = null;
+let _dbCategoriesLoaded = false;
+
+async function loadDbCategories() {
+  if (_dbCategoriesLoaded) return;
+  const sel = document.getElementById('ad-category');
+  const d = await api('/api/db-categories');
+  if (d.categories?.length) {
+    sel.innerHTML = '<option value="">All Categories</option>' +
+      d.categories.map(c => `<option value="${c.name}">${c.name} (${c.count.toLocaleString()})</option>`).join('');
+    _dbCategoriesLoaded = true;
+  }
+}
 
 async function loadAllData() {
+  if (!_dbCategoriesLoaded) loadDbCategories();
   const search = document.getElementById('ad-search').value;
   const city = document.getElementById('ad-city').value;
   const category = document.getElementById('ad-category').value;
