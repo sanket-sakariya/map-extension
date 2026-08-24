@@ -485,11 +485,11 @@ def get_results(
     if query:
         q = q.filter(Business.query == query)
     if city:
-        q = q.filter(Business.city.ilike(f"%{city}%"))
+        q = q.filter(Business.city == city)
     if state:
         q = q.filter(Business.state.ilike(f"%{state}%"))
     if category:
-        q = q.filter(Business.category.ilike(f"%{category}%"))
+        q = q.filter(Business.category == category)
     if min_rating > 0:
         q = q.filter(Business.rating >= min_rating)
     if min_reviews > 0:
@@ -645,11 +645,11 @@ def export_results_csv(
         if query:
             stmt = stmt.filter(Business.query == query)
         if city:
-            stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
+            stmt = stmt.filter(Business.city == city)
         if state:
             stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
         if category:
-            stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
+            stmt = stmt.filter(Business.category == category)
         if min_rating > 0:
             stmt = stmt.filter(Business.rating >= min_rating)
         if min_reviews > 0:
@@ -827,11 +827,11 @@ def export_domains_csv(
         if query:
             stmt = stmt.filter(Business.query == query)
         if city:
-            stmt = stmt.filter(Business.city.ilike(f"%{city}%"))
+            stmt = stmt.filter(Business.city == city)
         if state:
             stmt = stmt.filter(Business.state.ilike(f"%{state}%"))
         if category:
-            stmt = stmt.filter(Business.category.ilike(f"%{category}%"))
+            stmt = stmt.filter(Business.category == category)
         if min_rating > 0:
             stmt = stmt.filter(Business.rating >= min_rating)
         if min_reviews > 0:
