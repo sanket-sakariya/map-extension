@@ -227,6 +227,11 @@ SYNC_STATE_KEY = "domains:sync:state"
 # Postgres does the final aggregation, not Python.
 _FLUSH_EVERY = 200_000
 
+# Business rows updated per transaction when stamping the domain column. Small
+# enough that each chunk commits quickly and reports progress, large enough that
+# the per-statement overhead stays irrelevant.
+_LINK_CHUNK = 250_000
+
 
 def _set_sync_state(r, **fields):
     r.hset(SYNC_STATE_KEY, mapping={k: str(v) for k, v in fields.items()})
@@ -244,6 +249,8 @@ def sync_status() -> dict:
         "inserted": int(state.get("inserted", 0)),
         "websites": int(state.get("websites", 0)),
         "linked": int(state.get("linked", 0)),
+        "link_progress": int(state.get("link_progress", 0)),
+        "link_total": int(state.get("link_total", 0)),
         "started_at": state.get("started_at", ""),
         "finished_at": state.get("finished_at", ""),
         "error": state.get("error", ""),
@@ -369,20 +376,39 @@ def _run_sync(r):
                 SET business_count = EXCLUDED.business_count
         """)
         upserted = wcur.rowcount
+        # Commit the registry BEFORE the long business link. Both ran in one
+        # transaction previously, so the upsert's row locks on every domains row
+        # were held for the whole multi-minute link and blocked every pinger
+        # write-back behind them.
+        write_conn.commit()
 
         # Stamp businesses with their domain. IS DISTINCT FROM keeps a re-run
         # from rewriting rows that already hold the right value, so repeat syncs
         # cost a scan but almost no writes (and no table bloat).
-        _set_sync_state(r, phase="linking")
-        wcur.execute("""
-            UPDATE businesses b
-               SET domain = s.domain
-              FROM domains_stage s
-             WHERE b.website = s.website
-               AND b.domain IS DISTINCT FROM s.domain
-        """)
-        linked = wcur.rowcount
-        write_conn.commit()
+        #
+        # Chunked by primary key with a commit per chunk: a single UPDATE over
+        # 3M+ rows is one enormous transaction (WAL, bloat, and a lock footprint
+        # held to the very end), and it reports no progress until it finishes.
+        _set_sync_state(r, phase="linking", linked=0)
+        wcur.execute("SELECT COALESCE(MAX(id), 0) FROM businesses")
+        max_id = wcur.fetchone()[0]
+        linked = 0
+        lo = 0
+        while lo <= max_id:
+            hi = lo + _LINK_CHUNK
+            wcur.execute("""
+                UPDATE businesses b
+                   SET domain = s.domain
+                  FROM domains_stage s
+                 WHERE b.id >= %s AND b.id < %s
+                   AND b.website = s.website
+                   AND b.domain IS DISTINCT FROM s.domain
+            """, (lo, hi))
+            linked += wcur.rowcount
+            write_conn.commit()
+            lo = hi
+            _set_sync_state(r, phase="linking", linked=linked,
+                            link_progress=min(lo, max_id), link_total=max_id)
 
         wcur.execute("SELECT COUNT(DISTINCT domain) FROM domains_stage")
         distinct_domains = wcur.fetchone()[0]
