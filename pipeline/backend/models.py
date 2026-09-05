@@ -34,6 +34,7 @@ class Business(Base):
     reviews = Column(JSONB)
     maps_url = Column(Text)
     query = Column(Text)
+    domain = Column(Text)  # normalized from website; links to domains.domain
     scraped_at = Column(TIMESTAMP, server_default=func.now())
 
 

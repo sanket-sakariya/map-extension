@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS domains (
     tld             TEXT,
     status          TEXT NOT NULL DEFAULT 'pending',
     dns_status      TEXT,
+    ids_status      TEXT,
     rdap_status     TEXT,
     registrar       TEXT,
     expiry_date     TIMESTAMP,
@@ -178,6 +179,20 @@ CREATE INDEX IF NOT EXISTS idx_domains_checked_domain
 -- the queries a human actually runs on this page.
 CREATE INDEX IF NOT EXISTS idx_domains_expiry_live
     ON domains(expiry_date) WHERE expiry_date IS NOT NULL;
+
+-- Added after the table shipped, so guard it for existing databases.
+ALTER TABLE domains ADD COLUMN IF NOT EXISTS ids_status TEXT;
+
+-- Businesses carry the normalized domain of their website so "show me every
+-- business on this domain" is an index lookup instead of normalizing 4M rows
+-- at query time. Populated by the sync and by db_writer on insert.
+ALTER TABLE businesses ADD COLUMN IF NOT EXISTS domain TEXT;
+CREATE INDEX IF NOT EXISTS idx_biz_domain ON businesses(domain);
+-- Must carry the ORDER BY of the per-domain business listing. With only the
+-- single-column index above, the planner walks the GLOBAL idx_biz_review_count
+-- filtering on domain — millions of rows for one lookup, which times out.
+CREATE INDEX IF NOT EXISTS idx_biz_domain_reviews
+    ON businesses(domain, review_count DESC NULLS LAST, id ASC);
 
 -- Coverage reporting counts the never-checked rows. This partial index shrinks
 -- to empty as the sweep completes, so the count stays instant at any table size.
@@ -227,6 +242,8 @@ def sync_status() -> dict:
         "scanned": int(state.get("scanned", 0)),
         "domains": int(state.get("domains", 0)),
         "inserted": int(state.get("inserted", 0)),
+        "websites": int(state.get("websites", 0)),
+        "linked": int(state.get("linked", 0)),
         "started_at": state.get("started_at", ""),
         "finished_at": state.get("finished_at", ""),
         "error": state.get("error", ""),
@@ -260,10 +277,16 @@ def _sync_worker():
 
 def _run_sync(r):
     """
-    Stream every non-empty website, normalize it in Python (so the result is
-    byte-identical to what /api/results/export-domains produces), and accumulate
-    counts into an UNLOGGED staging table. Postgres then does the final GROUP BY
-    and upsert, which keeps peak Python memory flat.
+    Build the domain registry from every scraped website, and stamp each business
+    row with its normalized domain so per-domain business lookups are indexed.
+
+    Scans DISTINCT websites rather than all 3.2M business rows: normalization is
+    a pure function of the website string, so one staging row per distinct
+    website serves both outputs, and Postgres does the grouping.
+
+        businesses --GROUP BY website--> stage(website, domain, cnt)
+                                             |-> domains      (GROUP BY domain)
+                                             |-> businesses.domain (join on website)
 
     Read and write use SEPARATE connections on purpose: the reader holds a
     server-side (named) cursor, and a WITHOUT HOLD cursor is destroyed the moment
@@ -276,7 +299,10 @@ def _run_sync(r):
         wcur = write_conn.cursor()
         wcur.execute("SET statement_timeout = 0")
         wcur.execute("DROP TABLE IF EXISTS domains_stage")
-        wcur.execute("CREATE UNLOGGED TABLE domains_stage (domain TEXT, cnt INTEGER)")
+        wcur.execute(
+            "CREATE UNLOGGED TABLE domains_stage "
+            "(website TEXT, domain TEXT, cnt INTEGER)"
+        )
         write_conn.commit()
 
         rcur = read_conn.cursor()
@@ -284,44 +310,50 @@ def _run_sync(r):
         scan = read_conn.cursor(name="website_scan")
         scan.itersize = 20000
         scan.execute(
-            "SELECT website FROM businesses WHERE website IS NOT NULL AND website <> ''"
+            "SELECT website, COUNT(*) FROM businesses "
+            "WHERE website IS NOT NULL AND website <> '' GROUP BY website"
         )
 
-        counts: dict[str, int] = {}
-        scanned = 0
-        flushed = 0
+        pending: list[tuple[str, str, int]] = []
+        scanned = 0        # business rows represented
+        websites = 0       # distinct websites seen
+        staged = 0
 
         def flush():
-            nonlocal counts, flushed
-            if not counts:
+            nonlocal pending, staged
+            if not pending:
                 return
             execute_values(
                 wcur,
-                "INSERT INTO domains_stage (domain, cnt) VALUES %s",
-                list(counts.items()),
+                "INSERT INTO domains_stage (website, domain, cnt) VALUES %s",
+                pending,
                 page_size=10000,
             )
             write_conn.commit()
-            flushed += len(counts)
-            counts = {}
+            staged += len(pending)
+            pending = []
 
-        for (website,) in scan:
-            scanned += 1
+        for website, cnt in scan:
+            websites += 1
+            scanned += cnt
             d = extract_domain(website or "")
             if d and is_valid_domain(d):
-                counts[d] = counts.get(d, 0) + 1
-            if len(counts) >= _FLUSH_EVERY:
+                pending.append((website, d, cnt))
+            if len(pending) >= _FLUSH_EVERY:
                 flush()
-                _set_sync_state(r, scanned=scanned, domains=flushed)
-            elif scanned % 100000 == 0:
-                _set_sync_state(r, scanned=scanned, domains=flushed + len(counts))
+                _set_sync_state(r, scanned=scanned, domains=staged)
+            elif websites % 100000 == 0:
+                _set_sync_state(r, scanned=scanned, domains=staged + len(pending))
 
         flush()
         scan.close()
         read_conn.rollback()  # release the reader's transaction
-        _set_sync_state(r, phase="upserting", scanned=scanned, domains=flushed)
+        _set_sync_state(r, phase="upserting", scanned=scanned, domains=staged)
 
         wcur.execute("CREATE INDEX ON domains_stage (domain)")
+        wcur.execute("CREATE INDEX ON domains_stage (website)")
+        wcur.execute("ANALYZE domains_stage")
+
         # New rows enter as 'pending' with next_check_at = NOW(), so the pingers
         # pick them up immediately. Existing rows only get their business_count
         # refreshed — their check history and schedule are preserved.
@@ -337,15 +369,27 @@ def _run_sync(r):
                 SET business_count = EXCLUDED.business_count
         """)
         upserted = wcur.rowcount
-        # `flushed` counts rows written to staging, and a domain seen in two
-        # different flush batches is counted twice. Take the real distinct figure
-        # off the staging table before dropping it, so the UI stops claiming more
-        # unique domains than actually exist.
+
+        # Stamp businesses with their domain. IS DISTINCT FROM keeps a re-run
+        # from rewriting rows that already hold the right value, so repeat syncs
+        # cost a scan but almost no writes (and no table bloat).
+        _set_sync_state(r, phase="linking")
+        wcur.execute("""
+            UPDATE businesses b
+               SET domain = s.domain
+              FROM domains_stage s
+             WHERE b.website = s.website
+               AND b.domain IS DISTINCT FROM s.domain
+        """)
+        linked = wcur.rowcount
+        write_conn.commit()
+
         wcur.execute("SELECT COUNT(DISTINCT domain) FROM domains_stage")
         distinct_domains = wcur.fetchone()[0]
         wcur.execute("DROP TABLE IF EXISTS domains_stage")
         write_conn.commit()
-        _set_sync_state(r, inserted=upserted, domains=distinct_domains)
+        _set_sync_state(r, inserted=upserted, domains=distinct_domains,
+                        websites=websites, linked=linked)
     finally:
         try:
             read_conn.close()
@@ -408,10 +452,10 @@ def write_results(results: list[dict]):
         return
     rows = [
         (
-            r["id"], r["status"], r.get("dns_status"), r.get("rdap_status"),
-            r.get("registrar"), r.get("expiry_date"), r.get("created_date"),
-            r.get("registrable"), r.get("ns_records"), r.get("last_error"),
-            r["fail_streak"], r["next_check_at"],
+            r["id"], r["status"], r.get("dns_status"), r.get("ids_status"),
+            r.get("rdap_status"), r.get("registrar"), r.get("expiry_date"),
+            r.get("created_date"), r.get("registrable"), r.get("ns_records"),
+            r.get("last_error"), r["fail_streak"], r["next_check_at"],
         )
         for r in results
     ]
@@ -424,6 +468,7 @@ def write_results(results: list[dict]):
             UPDATE domains d SET
                 status          = v.status,
                 dns_status      = v.dns_status,
+                ids_status      = COALESCE(v.ids_status, d.ids_status),
                 rdap_status     = COALESCE(v.rdap_status, d.rdap_status),
                 registrar       = COALESCE(v.registrar, d.registrar),
                 expiry_date     = COALESCE(v.expiry_date, d.expiry_date),
@@ -435,13 +480,13 @@ def write_results(results: list[dict]):
                 check_count     = d.check_count + 1,
                 last_checked_at = NOW(),
                 next_check_at   = v.next_check_at
-            FROM (VALUES %s) AS v (id, status, dns_status, rdap_status, registrar,
-                                   expiry_date, created_date, registrable, ns_records,
-                                   last_error, fail_streak, next_check_at)
+            FROM (VALUES %s) AS v (id, status, dns_status, ids_status, rdap_status,
+                                   registrar, expiry_date, created_date, registrable,
+                                   ns_records, last_error, fail_streak, next_check_at)
             WHERE d.id = v.id
             """,
             rows,
-            template="(%s::bigint, %s::text, %s::text, %s::text, %s::text, "
+            template="(%s::bigint, %s::text, %s::text, %s::text, %s::text, %s::text, "
                      "%s::timestamp, %s::timestamp, %s::text, %s::jsonb, %s::text, "
                      "%s::int, %s::timestamp)",
             page_size=1000,

@@ -10,6 +10,7 @@ import redis as redis_lib
 from config import REDIS_URL
 from database import SessionLocal
 from models import Business
+from domains import extract_domain
 
 _running = False
 _thread = None
@@ -159,7 +160,10 @@ def _loop():
                         hours=item.get("hours"),
                         reviews=item.get("reviews"),
                         maps_url=item.get("url", ""),
-                        query=query
+                        query=query,
+                        # Stamp the domain at insert time so newly scraped
+                        # businesses are linked without waiting for a sync.
+                        domain=extract_domain(item.get("website", "")),
                     )
                     db.add(biz)
                     inserted += 1

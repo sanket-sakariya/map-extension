@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Maps Scraper Pipeline</title>
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
 
@@ -454,6 +454,7 @@
             <button class="btn btn-outline" onclick="resetDomainFilters()" id="btn-dom-reset"></button>
             <button class="btn btn-primary" onclick="domainsPage=1;loadDomains()" id="btn-dom-search"></button>
             <button class="btn btn-success" onclick="exportDomainStatusCSV()" id="btn-dom-export"></button>
+            <button class="btn btn-success" onclick="exportDomainBusinessesCSV()" id="btn-dom-export-biz"></button>
           </div>
         </div>
 
@@ -462,7 +463,7 @@
         <div id="dom-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>Domain</th><th>Status</th><th>Expiry</th><th>Days Left</th><th>Registrar</th><th>DNS</th><th>Businesses</th><th>Last Checked</th><th>Action</th></tr></thead>
+            <thead><tr><th>Domain</th><th>Status</th><th>Available</th><th>Expiry</th><th>Days Left</th><th>Registrar</th><th>DNS</th><th>Businesses</th><th>Last Checked</th><th>Action</th></tr></thead>
             <tbody id="dom-tbody"></tbody>
           </table>
         </div>
@@ -514,7 +515,7 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script src="icons.js?v=5"></script>
-<script src="app.js?v=5"></script>
+<script src="icons.js?v=6"></script>
+<script src="app.js?v=6"></script>
 </body>
 </html>

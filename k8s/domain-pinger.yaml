@@ -46,16 +46,32 @@ spec:
           value: "2000"
         - name: PING_IDLE_SLEEP
           value: "30"
-        # ── Tier 2: RDAP ──
-        # RDAP_RPS is the politeness control and the real ceiling; the per-batch
-        # budget only shapes how much of each batch's wall-clock is RDAP. At 40
-        # it left the limiter ~99% idle, so enrichment of 338k domains would have
-        # taken over a month. At 250 the limiter runs continuously at its 5rps.
+        # ── Tier 2: IDS bulk availability ──
+        # 500 domains per request, so the "is it registered?" question is asked
+        # for every domain on every sweep instead of being rationed. IDS_RPS
+        # counts REQUESTS, not domains: 5 req/s is ~2500 domains/s.
+        - name: IDS_ENABLED
+          value: "true"
+        - name: IDS_BATCH
+          value: "500"
+        - name: IDS_RPS
+          value: "5"
+        - name: IDS_TIMEOUT
+          value: "30"
+
+        # ── Tier 3: RDAP ──
+        # RDAP is now only for what the first two tiers cannot answer: the expiry
+        # date and registrar of a REGISTERED domain. _needs_rdap() skips anything
+        # IDS reports as available, so the budget is no longer spent confirming
+        # dead domains.
         #
-        # This is self-balancing: _needs_rdap() skips already-enriched domains
-        # with a distant expiry, so as enrichment completes fewer domains draw on
-        # the budget, batches stop being RDAP-bound, and the DNS sweep speeds back
-        # up on its own without any retuning.
+        # RDAP_RPS is the politeness control and the real ceiling; the per-batch
+        # budget shapes how much of each batch's wall-clock is RDAP. At 40 it left
+        # the limiter ~99% idle. At 250 it runs continuously at its 5rps.
+        #
+        # Self-balancing: as enrichment completes, fewer domains draw on the
+        # budget, batches stop being RDAP-bound, and the sweep speeds back up
+        # without any retuning.
         - name: RDAP_ENRICH
           value: "true"
         - name: RDAP_RPS
