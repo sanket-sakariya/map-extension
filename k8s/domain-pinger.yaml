@@ -47,14 +47,21 @@ spec:
         - name: PING_IDLE_SLEEP
           value: "30"
         # ── Tier 2: RDAP ──
-        # Deliberately slow. Registry operators rate-limit, and DNS already
-        # answers the "is it gone?" question for the whole corpus.
+        # RDAP_RPS is the politeness control and the real ceiling; the per-batch
+        # budget only shapes how much of each batch's wall-clock is RDAP. At 40
+        # it left the limiter ~99% idle, so enrichment of 338k domains would have
+        # taken over a month. At 250 the limiter runs continuously at its 5rps.
+        #
+        # This is self-balancing: _needs_rdap() skips already-enriched domains
+        # with a distant expiry, so as enrichment completes fewer domains draw on
+        # the budget, batches stop being RDAP-bound, and the DNS sweep speeds back
+        # up on its own without any retuning.
         - name: RDAP_ENRICH
           value: "true"
         - name: RDAP_RPS
           value: "5"
         - name: RDAP_BUDGET_PER_BATCH
-          value: "40"
+          value: "250"
         resources:
           requests:
             cpu: 100m
