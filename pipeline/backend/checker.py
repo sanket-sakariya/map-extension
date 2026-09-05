@@ -538,12 +538,14 @@ def _rdap_registrar(data: dict) -> str | None:
 async def check_domain_now(domain: str, redis_client=None) -> dict:
     """
     One-off check for a single domain, used by the UI's "Check now" button.
-    Always spends an RDAP call — a human is waiting for the answer.
+    Runs the full DNS -> IDS -> RDAP pipeline; RDAP is skipped only when IDS
+    already reports the name as unregistered, since a registry holds no expiry
+    date for a name nobody owns.
     """
     row = {"id": 0, "domain": domain, "status": None, "expiry_date": None,
            "rdap_status": None, "check_count": 0, "fail_streak": 1}
     async with DomainChecker(redis_client) as checker:
-        result = await checker.check_one(row, rdap_budget=None)
+        result = await checker.check_one(row)
     result["domain"] = domain
     result["ns_records"] = json.loads(result["ns_records"]) if result["ns_records"] else None
     for key in ("expiry_date", "created_date", "next_check_at"):
