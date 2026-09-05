@@ -1128,12 +1128,13 @@ async function loadDomainStats() {
     syncBtn.innerHTML = `<span class="spinner"></span> Syncing...`;
     el.innerHTML = sync.phase === 'upserting'
       ? `Writing ${Number(sync.domains).toLocaleString()} domains to the registry...`
-      : `Scanned ${Number(sync.scanned).toLocaleString()} websites, ${Number(sync.domains).toLocaleString()} unique domains so far...`;
+      : `Scanned ${Number(sync.scanned).toLocaleString()} websites, ${Number(sync.domains).toLocaleString()} domains staged...`;
   } else {
     syncBtn.disabled = false;
     syncBtn.innerHTML = `${icons.refresh} Sync Domains`;
     if (sync.phase === 'done') {
-      el.textContent = `Last sync ${sync.finished_at}: ${Number(sync.scanned).toLocaleString()} websites scanned.`;
+      el.textContent = `Last sync ${sync.finished_at}: ${Number(sync.scanned).toLocaleString()} websites scanned, `
+        + `${Number(sync.domains).toLocaleString()} unique domains.`;
     } else if (sync.phase === 'failed') {
       el.innerHTML = `<span style="color:var(--danger);">Last sync failed: ${sync.error}</span>`;
     } else {

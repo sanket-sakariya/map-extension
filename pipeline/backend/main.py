@@ -960,9 +960,15 @@ def domain_stats():
             due = db.execute(sql_text(
                 "SELECT COUNT(*) FROM domains WHERE next_check_at <= NOW() AND status <> 'invalid'"
             )).scalar() or 0
-            # Everything except 'pending' has been through a check at least once,
-            # so coverage comes from the status breakdown instead of a second scan.
-            checked = max(total - by_status.get(dom.PENDING, 0), 0)
+            # Count the never-checked rows directly rather than inferring coverage
+            # from status: 'pending' also holds domains that HAVE been checked once
+            # and returned an unconfirmed NXDOMAIN, so subtracting it understates
+            # coverage. idx_domains_unchecked makes this cheap once the sweep is
+            # done, because the set it indexes shrinks to nothing.
+            unchecked = db.execute(sql_text(
+                "SELECT COUNT(*) FROM domains WHERE last_checked_at IS NULL"
+            )).scalar() or 0
+            checked = max(total - unchecked, 0)
             expiring_30 = db.execute(sql_text(
                 "SELECT COUNT(*) FROM domains WHERE expiry_date IS NOT NULL "
                 "AND expiry_date > NOW() AND expiry_date <= NOW() + INTERVAL '30 days'"
@@ -980,7 +986,7 @@ def domain_stats():
         "total": total,
         "by_status": {s: by_status.get(s, 0) for s in dom.ALL_STATUSES},
         "checked": checked,
-        "unchecked": max(total - checked, 0),
+        "unchecked": max(total - checked, 0),  # never-checked, not "not yet settled"
         "due_now": due,
         "expiring_30d": expiring_30,
         "coverage_pct": round(checked * 100.0 / total, 1) if total else 0.0,

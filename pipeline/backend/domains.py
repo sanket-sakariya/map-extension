@@ -179,6 +179,11 @@ CREATE INDEX IF NOT EXISTS idx_domains_checked_domain
 CREATE INDEX IF NOT EXISTS idx_domains_expiry_live
     ON domains(expiry_date) WHERE expiry_date IS NOT NULL;
 
+-- Coverage reporting counts the never-checked rows. This partial index shrinks
+-- to empty as the sweep completes, so the count stays instant at any table size.
+CREATE INDEX IF NOT EXISTS idx_domains_unchecked
+    ON domains(id) WHERE last_checked_at IS NULL;
+
 -- Substring search over the domain column from the UI filter box.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE INDEX IF NOT EXISTS idx_domains_trgm ON domains USING GIN (domain gin_trgm_ops);
@@ -332,9 +337,15 @@ def _run_sync(r):
                 SET business_count = EXCLUDED.business_count
         """)
         upserted = wcur.rowcount
+        # `flushed` counts rows written to staging, and a domain seen in two
+        # different flush batches is counted twice. Take the real distinct figure
+        # off the staging table before dropping it, so the UI stops claiming more
+        # unique domains than actually exist.
+        wcur.execute("SELECT COUNT(DISTINCT domain) FROM domains_stage")
+        distinct_domains = wcur.fetchone()[0]
         wcur.execute("DROP TABLE IF EXISTS domains_stage")
         write_conn.commit()
-        _set_sync_state(r, inserted=upserted, domains=flushed)
+        _set_sync_state(r, inserted=upserted, domains=distinct_domains)
     finally:
         try:
             read_conn.close()
