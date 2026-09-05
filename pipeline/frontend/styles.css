@@ -293,6 +293,8 @@ tr:hover td { background: var(--primary-50); }
 .tag-blue { background: var(--primary-100); color: var(--primary-dark); }
 .tag-green { background: #d1fae5; color: #065f46; }
 .tag-red { background: #fee2e2; color: #991b1b; }
+.tag-amber { background: #fef3c7; color: #92400e; }
+.tag-grey { background: #e2e8f0; color: #475569; }
 
 /* Grid */
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }

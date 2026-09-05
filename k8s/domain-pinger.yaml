@@ -1,0 +1,60 @@
+# Domain ping workers.
+#
+# Runs the SAME image as the backend — only the command differs — so there is no
+# second image to build, tag or keep in sync. Replicas claim work with
+# FOR UPDATE SKIP LOCKED, so scaling this deployment scales throughput linearly
+# with no other change.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: domain-pinger
+  namespace: map-extractor
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: domain-pinger
+  template:
+    metadata:
+      labels:
+        app: domain-pinger
+    spec:
+      containers:
+      - name: pinger
+        image: noasdaewplzc1305/map-extractor-backend:latest
+        imagePullPolicy: Always
+        command: ["python", "-u", "pinger.py"]
+        env:
+        - name: REDIS_URL
+          value: redis://redis:6379/0
+        - name: DATABASE_URL
+          value: postgresql://postgres:postgres@postgres:5432/mapscraper
+        # ── Tier 1: DNS ──
+        # Queried straight at public resolvers rather than through CoreDNS, so a
+        # sweep of millions of domains never touches cluster DNS.
+        - name: PING_RESOLVERS
+          value: "1.1.1.1,8.8.8.8,9.9.9.9,1.0.0.1,8.8.4.4"
+        - name: PING_CONCURRENCY
+          value: "200"
+        - name: PING_DNS_TIMEOUT
+          value: "3.0"
+        - name: PING_BATCH_SIZE
+          value: "500"
+        - name: PING_IDLE_SLEEP
+          value: "30"
+        # ── Tier 2: RDAP ──
+        # Deliberately slow. Registry operators rate-limit, and DNS already
+        # answers the "is it gone?" question for the whole corpus.
+        - name: RDAP_ENRICH
+          value: "true"
+        - name: RDAP_RPS
+          value: "5"
+        - name: RDAP_BUDGET_PER_BATCH
+          value: "40"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 800m
+            memory: 512Mi

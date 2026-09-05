@@ -1,9 +1,7 @@
 """Maps Scraping Pipeline — FastAPI Backend"""
 import json
-import re
 import time
 from contextlib import asynccontextmanager
-from urllib.parse import urlsplit
 
 import csv
 import io
@@ -22,6 +20,12 @@ import github_client
 import query_generator
 import orchestrator
 import db_writer
+import domains as dom
+import checker
+
+# Single implementation of URL -> bare domain, shared with the domain registry
+# and the pinger so the CSV export and the ping table can never disagree.
+extract_domain = dom.extract_domain
 
 
 def get_pat() -> str:
@@ -50,6 +54,7 @@ def save_pat(pat: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    dom.ensure_schema()
     db_writer.start()
     orchestrator.start(get_pat)
     yield
@@ -759,39 +764,6 @@ def export_results_csv(
         raise
 
 
-def extract_domain(raw_url: str) -> str:
-    """
-    Extract a clean, bare domain (no protocol, no leading www., no path/query/fragment)
-    from a raw scraped website URL. Handles malformed source data gracefully:
-    - Missing/duplicated protocol prefixes (e.g. "https://https:example.com")
-    - Any number of leading "w" characters before a dot (e.g. "wwww.example.com")
-    - "www." appearing as a non-leading label (e.g. "use.www.example.com" -> keeps
-      the real registrable-looking tail, since stripping only a leading www. is safe
-      but a mid-string www. is part of the actual hostname and left as-is)
-    Returns "" if no usable domain can be derived.
-    """
-    if not raw_url:
-        return ""
-    url = raw_url.strip()
-    # Ensure urlsplit sees a scheme so netloc parses correctly; if it already has
-    # one (even a malformed doubled one) this is harmless since we only use netloc.
-    if "://" not in url:
-        url = "http://" + url
-    try:
-        netloc = urlsplit(url).netloc
-    except Exception:
-        netloc = ""
-    if not netloc:
-        # Fallback for URLs urlsplit couldn't parse at all
-        netloc = url.split("//")[-1].split("/")[0]
-    netloc = netloc.split("@")[-1]  # drop any userinfo (user:pass@)
-    netloc = netloc.split(":")[0]   # drop port
-    # Collapse any run of leading "w" characters immediately before a dot
-    # (e.g. "wwww." or "ww." -> "www." is NOT assumed; we simply strip them like www.)
-    netloc = re.sub(r"^w+\.", "", netloc, flags=re.IGNORECASE)
-    return netloc.strip().lower()
-
-
 @app.get("/api/results/export-domains")
 def export_domains_csv(
     search: str = "",
@@ -898,6 +870,343 @@ def export_domains_csv(
             domain_generator(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=domains.csv"}
+        )
+    except Exception:
+        tx.rollback()
+        db.close()
+        raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Domain Ping / Expiry Monitor
+# ═══════════════════════════════════════════════════════════════════════════
+
+class PingerToggleRequest(BaseModel):
+    enabled: bool
+
+
+class RecheckRequest(BaseModel):
+    domain: str = ""      # single domain
+    status: str = ""      # every domain currently in this status
+    all: bool = False     # the whole table
+
+
+def _domain_filters(status: str, search: str, tld: str, expiring_within: int):
+    """
+    Build the shared WHERE clause for the domain list/count/export endpoints.
+    Returns (sql_fragment, params) — one definition so the table, the row count
+    and the CSV can never drift apart.
+    """
+    clauses, params = [], {}
+    if status and status != "all":
+        clauses.append("status = :status")
+        params["status"] = status
+    if search:
+        clauses.append("domain ILIKE :search")
+        params["search"] = f"%{search}%"
+    if tld:
+        clauses.append("tld = :tld")
+        params["tld"] = tld.lower().lstrip(".")
+    if expiring_within > 0:
+        clauses.append(
+            "expiry_date IS NOT NULL AND expiry_date <= NOW() + (:days || ' days')::interval"
+        )
+        params["days"] = expiring_within
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return where, params
+
+
+_DOMAIN_SORTS = {
+    "domain": "domain",
+    "status": "status",
+    "expiry": "expiry_date",
+    "checked": "last_checked_at",
+    "businesses": "business_count",
+    "registrar": "registrar",
+}
+
+
+@app.get("/api/domains/stats")
+def domain_stats():
+    """
+    Status breakdown + queue depth + worker heartbeat. Cached briefly in Redis so
+    the page's auto-refresh can't turn into a COUNT storm on a multi-million row
+    table.
+    """
+    r = get_redis()
+    cached = r.get("cache:domain_stats")
+    if cached:
+        return json.loads(cached)
+
+    db = SessionLocal()
+    try:
+        enabled_row = db.execute(sql_text(
+            "SELECT value FROM settings WHERE key = 'pinger_enabled'"
+        )).fetchone()
+
+        # These aggregates scan a table that is expected to reach millions of
+        # rows. Give them a budget and degrade to partial numbers rather than
+        # 500-ing the whole page if one of them blows past it.
+        by_status, total, due, checked, expiring_30 = {}, 0, 0, 0, 0
+        degraded = False
+        try:
+            db.execute(sql_text("SET LOCAL statement_timeout = '8000ms'"))
+            rows = db.execute(sql_text(
+                "SELECT status, COUNT(*) FROM domains GROUP BY status"
+            )).fetchall()
+            by_status = {row[0]: row[1] for row in rows}
+            total = sum(by_status.values())
+
+            due = db.execute(sql_text(
+                "SELECT COUNT(*) FROM domains WHERE next_check_at <= NOW() AND status <> 'invalid'"
+            )).scalar() or 0
+            # Everything except 'pending' has been through a check at least once,
+            # so coverage comes from the status breakdown instead of a second scan.
+            checked = max(total - by_status.get(dom.PENDING, 0), 0)
+            expiring_30 = db.execute(sql_text(
+                "SELECT COUNT(*) FROM domains WHERE expiry_date IS NOT NULL "
+                "AND expiry_date > NOW() AND expiry_date <= NOW() + INTERVAL '30 days'"
+            )).scalar() or 0
+        except Exception:
+            db.rollback()
+            degraded = True
+            total = db.execute(sql_text(
+                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'domains'"
+            )).scalar() or 0
+    finally:
+        db.close()
+
+    result = {
+        "total": total,
+        "by_status": {s: by_status.get(s, 0) for s in dom.ALL_STATUSES},
+        "checked": checked,
+        "unchecked": max(total - checked, 0),
+        "due_now": due,
+        "expiring_30d": expiring_30,
+        "coverage_pct": round(checked * 100.0 / total, 1) if total else 0.0,
+        "degraded": degraded,
+        "pinger_enabled": (enabled_row[0].lower() != "false") if enabled_row else True,
+        "worker": r.hgetall("domains:pinger:stats") or {},
+        "sync": dom.sync_status(),
+    }
+    r.set("cache:domain_stats", json.dumps(result), ex=10)
+    return result
+
+
+@app.get("/api/domains")
+def list_domains(
+    status: str = "",
+    search: str = "",
+    tld: str = "",
+    expiring_within: int = 0,
+    sort_by: str = "businesses",
+    sort_order: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+):
+    where, params = _domain_filters(status, search, tld, expiring_within)
+    order_col = _DOMAIN_SORTS.get(sort_by, "business_count")
+    direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(sql_text(
+            f"""SELECT domain, status, dns_status, rdap_status, registrar, expiry_date,
+                       created_date, business_count, last_checked_at, last_error, tld,
+                       registrable, check_count
+                  FROM domains {where}
+                 ORDER BY {order_col} {direction} NULLS LAST, domain ASC
+                 LIMIT :limit OFFSET :offset"""
+        ), {**params, "limit": limit, "offset": offset}).fetchall()
+
+        # Same guarded-count pattern the results endpoints use: exact when it is
+        # cheap, estimated when the table is too large to count in time.
+        if len(rows) < limit and offset == 0:
+            total = len(rows)
+        else:
+            try:
+                db.execute(sql_text("SET LOCAL statement_timeout = '4000ms'"))
+                total = db.execute(
+                    sql_text(f"SELECT COUNT(*) FROM domains {where}"), params
+                ).scalar() or 0
+            except Exception:
+                db.rollback()
+                total = db.execute(sql_text(
+                    "SELECT reltuples::bigint FROM pg_class WHERE relname = 'domains'"
+                )).scalar() or 0
+    finally:
+        db.close()
+
+    return {
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+        "domains": [{
+            "domain": r[0], "status": r[1], "dns_status": r[2], "rdap_status": r[3],
+            "registrar": r[4],
+            "expiry_date": r[5].isoformat() if r[5] else None,
+            "created_date": r[6].isoformat() if r[6] else None,
+            "business_count": r[7],
+            "last_checked_at": r[8].isoformat() if r[8] else None,
+            "last_error": r[9], "tld": r[10], "registrable": r[11], "check_count": r[12],
+        } for r in rows],
+    }
+
+
+@app.get("/api/domains/tlds")
+def domain_tlds():
+    """Distinct TLDs with counts, for the filter dropdown. Cached 1hr."""
+    r = get_redis()
+    cached = r.get("cache:domain_tlds")
+    if cached:
+        return json.loads(cached)
+    db = SessionLocal()
+    try:
+        rows = db.execute(sql_text(
+            "SELECT tld, COUNT(*) FROM domains WHERE tld IS NOT NULL AND tld <> '' "
+            "GROUP BY tld ORDER BY COUNT(*) DESC LIMIT 300"
+        )).fetchall()
+    finally:
+        db.close()
+    result = {"count": len(rows), "tlds": [{"name": x[0], "count": x[1]} for x in rows]}
+    r.set("cache:domain_tlds", json.dumps(result), ex=3600)
+    return result
+
+
+@app.post("/api/domains/sync")
+def sync_domains():
+    """Extract unique domains from every scraped website into the domain registry."""
+    if dom.start_sync():
+        return {"status": "started"}
+    return {"status": "already_running", "message": "A sync is already in progress"}
+
+
+@app.get("/api/domains/sync/status")
+def domain_sync_status():
+    return dom.sync_status()
+
+
+@app.post("/api/domains/pinger")
+def toggle_pinger(req: PingerToggleRequest):
+    """Pause/resume every pinger replica without a rollout."""
+    db = SessionLocal()
+    try:
+        db.execute(sql_text(
+            "INSERT INTO settings (key, value, updated_at) "
+            "VALUES ('pinger_enabled', :v, NOW()) "
+            "ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = NOW()"
+        ), {"v": "true" if req.enabled else "false"})
+        db.commit()
+    finally:
+        db.close()
+    get_redis().delete("cache:domain_stats")
+    return {"status": "ok", "enabled": req.enabled}
+
+
+@app.post("/api/domains/recheck")
+def recheck_domains(req: RecheckRequest):
+    """
+    Bring domains forward in the queue by clearing their next_check_at. Also
+    resets fail_streak so a re-check starts from clean evidence.
+    """
+    db = SessionLocal()
+    try:
+        if req.domain:
+            sql = ("UPDATE domains SET next_check_at = NOW(), fail_streak = 0 "
+                   "WHERE domain = :d")
+            params = {"d": req.domain.strip().lower()}
+        elif req.status and req.status != "all":
+            sql = ("UPDATE domains SET next_check_at = NOW(), fail_streak = 0 "
+                   "WHERE status = :s")
+            params = {"s": req.status}
+        elif req.all:
+            sql = ("UPDATE domains SET next_check_at = NOW(), fail_streak = 0 "
+                   "WHERE status <> 'invalid'")
+            params = {}
+        else:
+            return {"status": "error", "message": "Specify domain, status, or all"}
+
+        db.execute(sql_text("SET LOCAL statement_timeout = 0"))
+        result = db.execute(sql_text(sql), params)
+        db.commit()
+        queued = result.rowcount
+    finally:
+        db.close()
+    get_redis().delete("cache:domain_stats")
+    return {"status": "ok", "queued": queued}
+
+
+@app.get("/api/domains/check")
+async def check_single_domain(domain: str):
+    """Live on-demand check for one domain — powers the 'Check now' button."""
+    d = dom.extract_domain(domain)
+    if not d or not dom.is_valid_domain(d):
+        return {"status": "error", "message": f"'{domain}' is not a valid domain"}
+    try:
+        result = await checker.check_domain_now(d, get_redis())
+    except Exception as e:
+        return {"status": "error", "message": str(e)[:300]}
+    return {"status": "ok", "result": result}
+
+
+@app.get("/api/domains/export")
+def export_domains_registry(
+    status: str = "",
+    search: str = "",
+    tld: str = "",
+    expiring_within: int = 0,
+    sort_by: str = "businesses",
+    sort_order: str = "desc",
+):
+    """Stream the filtered domain registry as CSV, including ping results."""
+    where, params = _domain_filters(status, search, tld, expiring_within)
+    order_col = _DOMAIN_SORTS.get(sort_by, "business_count")
+    direction = "ASC" if sort_order.lower() == "asc" else "DESC"
+
+    db = SessionLocal()
+    tx = db.begin()
+    try:
+        result = db.execute(sql_text(
+            f"""SELECT domain, status, dns_status, rdap_status, registrar, expiry_date,
+                       created_date, business_count, last_checked_at, last_error
+                  FROM domains {where}
+                 ORDER BY {order_col} {direction} NULLS LAST, domain ASC"""
+        ).execution_options(yield_per=10000), params)
+
+        def csv_generator():
+            try:
+                output = io.StringIO()
+                writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+                writer.writerow([
+                    "Domain", "Status", "DNS", "RDAP", "Registrar", "Expiry Date",
+                    "Registered On", "Businesses", "Last Checked", "Note",
+                ])
+                yield output.getvalue()
+                output.seek(0); output.truncate(0)
+
+                for row in result:
+                    writer.writerow([
+                        row[0], row[1], row[2] or "", row[3] or "", row[4] or "",
+                        row[5].strftime("%Y-%m-%d") if row[5] else "",
+                        row[6].strftime("%Y-%m-%d") if row[6] else "",
+                        row[7] or 0,
+                        row[8].strftime("%Y-%m-%d %H:%M") if row[8] else "",
+                        row[9] or "",
+                    ])
+                    if output.tell() > 65536:
+                        yield output.getvalue()
+                        output.seek(0); output.truncate(0)
+
+                if output.tell() > 0:
+                    yield output.getvalue()
+            finally:
+                tx.close()
+                db.close()
+
+        return StreamingResponse(
+            csv_generator(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=domain-status.csv"},
         )
     except Exception:
         tx.rollback()
