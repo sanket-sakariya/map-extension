@@ -1019,7 +1019,7 @@ def list_domains(
         rows = db.execute(sql_text(
             f"""SELECT domain, status, dns_status, rdap_status, registrar, expiry_date,
                        created_date, business_count, last_checked_at, last_error, tld,
-                       registrable, check_count
+                       registrable, check_count, ids_status
                   FROM domains {where}
                  ORDER BY {order_col} {direction} NULLS LAST, domain ASC
                  LIMIT :limit OFFSET :offset"""
@@ -1055,6 +1055,9 @@ def list_domains(
             "business_count": r[7],
             "last_checked_at": r[8].isoformat() if r[8] else None,
             "last_error": r[9], "tld": r[10], "registrable": r[11], "check_count": r[12],
+            "ids_status": r[13],
+            # The plain-English answer to "can I register this?"
+            "available": r[13] == "available",
         } for r in rows],
     }
 
@@ -1174,7 +1177,7 @@ def export_domains_registry(
     try:
         result = db.execute(sql_text(
             f"""SELECT domain, status, dns_status, rdap_status, registrar, expiry_date,
-                       created_date, business_count, last_checked_at, last_error
+                       created_date, business_count, last_checked_at, last_error, ids_status
                   FROM domains {where}
                  ORDER BY {order_col} {direction} NULLS LAST, domain ASC"""
         ).execution_options(yield_per=10000), params)
@@ -1184,15 +1187,18 @@ def export_domains_registry(
                 output = io.StringIO()
                 writer = csv.writer(output, quoting=csv.QUOTE_ALL)
                 writer.writerow([
-                    "Domain", "Status", "DNS", "RDAP", "Registrar", "Expiry Date",
-                    "Registered On", "Businesses", "Last Checked", "Note",
+                    "Domain", "Status", "Available To Register", "DNS", "RDAP",
+                    "Registrar", "Expiry Date", "Registered On", "Businesses",
+                    "Last Checked", "Note",
                 ])
                 yield output.getvalue()
                 output.seek(0); output.truncate(0)
 
                 for row in result:
                     writer.writerow([
-                        row[0], row[1], row[2] or "", row[3] or "", row[4] or "",
+                        row[0], row[1],
+                        "yes" if row[10] == "available" else "no" if row[10] else "",
+                        row[2] or "", row[3] or "", row[4] or "",
                         row[5].strftime("%Y-%m-%d") if row[5] else "",
                         row[6].strftime("%Y-%m-%d") if row[6] else "",
                         row[7] or 0,
@@ -1213,6 +1219,140 @@ def export_domains_registry(
             csv_generator(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=domain-status.csv"},
+        )
+    except Exception:
+        tx.rollback()
+        db.close()
+        raise
+
+
+@app.get("/api/domains/businesses")
+def domain_businesses(domain: str, limit: int = 50, offset: int = 0):
+    """
+    Every scraped business record sitting on a given domain — the full row, not
+    just the count shown in the domain table. Backed by businesses.domain, which
+    the sync stamps and db_writer maintains, so this is an index lookup rather
+    than normalizing millions of website strings per request.
+    """
+    d = dom.extract_domain(domain)
+    if not d or not dom.is_valid_domain(d):
+        return {"status": "error", "message": f"'{domain}' is not a valid domain"}
+
+    db = SessionLocal()
+    try:
+        total = db.execute(sql_text(
+            "SELECT COUNT(*) FROM businesses WHERE domain = :d"
+        ), {"d": d}).scalar() or 0
+
+        rows = db.execute(sql_text("""
+            SELECT id, name, category, rating, review_count, phone, website, address,
+                   city, state, plus_code, current_status, identifies_as, hours,
+                   reviews, maps_url, query, cid, place_id, scraped_at
+              FROM businesses
+             WHERE domain = :d
+             ORDER BY review_count DESC NULLS LAST, id ASC
+             LIMIT :limit OFFSET :offset
+        """), {"d": d, "limit": limit, "offset": offset}).fetchall()
+    finally:
+        db.close()
+
+    return {
+        "status": "ok",
+        "domain": d,
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+        "businesses": [{
+            "id": r[0], "name": r[1], "category": r[2],
+            "rating": float(r[3]) if r[3] is not None else None,
+            "review_count": r[4], "phone": r[5], "website": r[6], "address": r[7],
+            "city": r[8], "state": r[9], "plus_code": r[10], "current_status": r[11],
+            "identifies_as": r[12], "hours": r[13], "reviews": r[14], "maps_url": r[15],
+            "query": r[16], "cid": r[17], "place_id": r[18],
+            "scraped_at": r[19].isoformat() if r[19] else None,
+        } for r in rows],
+    }
+
+
+@app.get("/api/domains/businesses/export")
+def export_domain_businesses(
+    domain: str = "",
+    status: str = "",
+    search: str = "",
+    tld: str = "",
+    expiring_within: int = 0,
+):
+    """
+    Stream full business records as CSV — either for one domain, or for every
+    domain matching the current registry filters (e.g. every business whose
+    website sits on an expired domain, which is the point of the whole feature).
+    """
+    db = SessionLocal()
+    tx = db.begin()
+    try:
+        if domain:
+            d = dom.extract_domain(domain)
+            if not d or not dom.is_valid_domain(d):
+                tx.rollback(); db.close()
+                return {"status": "error", "message": f"'{domain}' is not a valid domain"}
+            where, params = "WHERE b.domain = :d", {"d": d}
+        else:
+            dwhere, params = _domain_filters(status, search, tld, expiring_within)
+            # Join through the registry so registry-level filters select the
+            # business rows, rather than re-deriving domain status here.
+            # _domain_filters returns a leading " WHERE ...", or "" for no filters.
+            where = f"WHERE b.domain IN (SELECT domain FROM domains{dwhere})"
+
+        result = db.execute(sql_text(f"""
+            SELECT b.domain, d.status, d.expiry_date, d.registrar,
+                   b.name, b.category, b.rating, b.review_count, b.phone, b.website,
+                   b.address, b.city, b.state, b.plus_code, b.current_status,
+                   b.identifies_as, b.maps_url, b.query, b.cid, b.place_id, b.scraped_at
+              FROM businesses b
+              LEFT JOIN domains d ON d.domain = b.domain
+              {where}
+             ORDER BY b.domain ASC, b.review_count DESC NULLS LAST
+        """).execution_options(yield_per=5000), params)
+
+        def csv_generator():
+            try:
+                output = io.StringIO()
+                writer = csv.writer(output, quoting=csv.QUOTE_ALL)
+                writer.writerow([
+                    "Domain", "Domain Status", "Domain Expiry", "Registrar",
+                    "Business Name", "Category", "Rating", "Reviews", "Phone", "Website",
+                    "Address", "City", "State", "Plus Code", "Current Status",
+                    "Identifies As", "Maps URL", "Scraped Query", "CID", "Place ID",
+                    "Scraped At",
+                ])
+                yield output.getvalue()
+                output.seek(0); output.truncate(0)
+
+                for r in result:
+                    writer.writerow([
+                        r[0] or "", r[1] or "",
+                        r[2].strftime("%Y-%m-%d") if r[2] else "", r[3] or "",
+                        r[4] or "", r[5] or "", r[6] if r[6] is not None else "",
+                        r[7] or 0, r[8] or "", r[9] or "", r[10] or "", r[11] or "",
+                        r[12] or "", r[13] or "", r[14] or "", r[15] or "", r[16] or "",
+                        r[17] or "", r[18] or "", r[19] or "",
+                        r[20].strftime("%Y-%m-%d %H:%M") if r[20] else "",
+                    ])
+                    if output.tell() > 65536:
+                        yield output.getvalue()
+                        output.seek(0); output.truncate(0)
+
+                if output.tell() > 0:
+                    yield output.getvalue()
+            finally:
+                tx.close()
+                db.close()
+
+        name = domain or (status or "all")
+        return StreamingResponse(
+            csv_generator(),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={name}-businesses.csv"},
         )
     except Exception:
         tx.rollback()

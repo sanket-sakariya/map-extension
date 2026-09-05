@@ -178,6 +178,7 @@ function renderIcons() {
   document.getElementById('btn-dom-search').innerHTML = `${icons.search} Search`;
   document.getElementById('btn-dom-reset').innerHTML = `${icons.refresh} Reset`;
   document.getElementById('btn-dom-export').innerHTML = `${icons.download} Export CSV`;
+  document.getElementById('btn-dom-export-biz').innerHTML = `${icons.database} Export Businesses`;
   document.getElementById('btn-dom-checkone').innerHTML = `${icons.zap} Check Now`;
 
   // Biz/Loc titles
@@ -1182,7 +1183,7 @@ async function loadDomains() {
   const info = document.getElementById('dom-info');
   info.innerHTML = `<span class="spinner"></span> Loading domains...`;
   tbody.innerHTML = Array.from({length: 6}).map(() =>
-    `<tr class="skeleton-row"><td colspan="9"><div class="skeleton-bar"></div></td></tr>`).join('');
+    `<tr class="skeleton-row"><td colspan="10"><div class="skeleton-bar"></div></td></tr>`).join('');
   document.getElementById('dom-pagination').innerHTML = '';
 
   let d;
@@ -1191,29 +1192,33 @@ async function loadDomains() {
   } catch (e) {
     if (e.name === 'AbortError') return;
     info.textContent = 'Failed to load domains.';
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
     return;
   }
 
   if (d.error) {
     info.textContent = 'Failed to load domains.';
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
     return;
   }
 
   info.textContent = `${(d.total || 0).toLocaleString()} domains`;
 
   if (!d.domains?.length) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:24px;">
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--text-muted);padding:24px;">
       No domains match these filters. If the registry is empty, click "Sync Domains" to import them from your scraped data.</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = d.domains.map(r => {
+  tbody.innerHTML = d.domains.map((r, i) => {
     const days = daysUntil(r.expiry_date);
+    const count = r.business_count || 0;
     return `<tr>
-      <td style="font-weight:500;"><a href="http://${r.domain}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">${r.domain}</a></td>
+      <td style="font-weight:500;">
+        <a href="http://${r.domain}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">${r.domain}</a>
+      </td>
       <td>${domStatusTag(r.status)}${r.last_error ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${escapeHtml(r.last_error)}</div>` : ''}</td>
+      <td>${availabilityTag(r)}</td>
       <td>${r.expiry_date ? r.expiry_date.slice(0, 10) : '<span style="color:var(--text-muted);">-</span>'}</td>
       <td>${days === null ? '<span style="color:var(--text-muted);">-</span>'
             : days < 0 ? `<span style="color:var(--danger);font-weight:600;">${Math.abs(days)}d ago</span>`
@@ -1221,10 +1226,13 @@ async function loadDomains() {
             : `${days}d`}</td>
       <td style="font-size:12px;">${r.registrar ? escapeHtml(r.registrar) : '-'}</td>
       <td style="font-size:11px;color:var(--text-secondary);">${r.dns_status || '-'}</td>
-      <td>${(r.business_count || 0).toLocaleString()}</td>
+      <td>${count > 0
+            ? `<button class="btn btn-outline" style="padding:3px 9px;font-size:11px;" onclick="toggleDomainBusinesses('${r.domain}', ${i})" id="dom-biz-btn-${i}">${count.toLocaleString()} &#9662;</button>`
+            : '<span style="color:var(--text-muted);">0</span>'}</td>
       <td style="font-size:11px;color:var(--text-muted);">${r.last_checked_at ? new Date(r.last_checked_at).toLocaleString() : 'never'}</td>
       <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="recheckDomain('${r.domain}')">Recheck</button></td>
-    </tr>`;
+    </tr>
+    <tr id="dom-biz-row-${i}" style="display:none;"><td colspan="10" style="background:var(--bg);padding:12px;" id="dom-biz-cell-${i}"></td></tr>`;
   }).join('');
 
   renderDomPag(Math.ceil((d.total || 0) / perPage));
@@ -1345,6 +1353,7 @@ async function checkOneDomain() {
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;color:var(--text-secondary);">
       <div><strong>DNS:</strong> ${r.dns_status || '-'}</div>
+      <div><strong>Availability:</strong> ${r.ids_status === 'available' ? '<span style="color:var(--danger);font-weight:600;">available to register</span>' : r.ids_status === 'registered' ? 'taken' : 'unknown'}</div>
       <div><strong>Registry (RDAP):</strong> ${r.rdap_status || 'not queried'}</div>
       <div><strong>Registrar:</strong> ${r.registrar ? escapeHtml(r.registrar) : '-'}</div>
       <div><strong>Expires:</strong> ${r.expiry_date ? r.expiry_date.slice(0,10) : '-'}</div>
@@ -1387,4 +1396,116 @@ function resetDomainFilters() {
   document.getElementById('dom-check-result').style.display = 'none';
   domainsPage = 1;
   loadDomains();
+}
+
+// ─── Domain availability + business drill-down ──────────────────────────────
+
+// The plain answer to "can I register this?" — comes from the bulk availability
+// check, which is asked for every domain on every sweep.
+function availabilityTag(r) {
+  if (r.ids_status === 'available') return '<span class="tag tag-red">Available</span>';
+  if (r.ids_status === 'registered') return '<span class="tag tag-green">Taken</span>';
+  return '<span style="color:var(--text-muted);font-size:11px;">-</span>';
+}
+
+// Cache per domain so collapsing and re-expanding doesn't refetch.
+const _domBiz = {};
+
+async function toggleDomainBusinesses(domain, i) {
+  const row = document.getElementById(`dom-biz-row-${i}`);
+  const cell = document.getElementById(`dom-biz-cell-${i}`);
+  const btn = document.getElementById(`dom-biz-btn-${i}`);
+  if (!row) return;
+
+  if (row.style.display !== 'none') {
+    row.style.display = 'none';
+    btn.innerHTML = btn.innerHTML.replace('▴', '▾');
+    return;
+  }
+
+  row.style.display = 'table-row';
+  btn.innerHTML = btn.innerHTML.replace('▾', '▴');
+
+  if (_domBiz[domain]) { cell.innerHTML = _domBiz[domain]; return; }
+
+  cell.innerHTML = `<span class="spinner"></span> Loading businesses on ${escapeHtml(domain)}...`;
+  const d = await api(`/api/domains/businesses?domain=${encodeURIComponent(domain)}&limit=100`);
+
+  if (d.status !== 'ok') {
+    cell.innerHTML = `<span style="color:var(--danger);">${escapeHtml(d.message || 'Failed to load businesses')}</span>`;
+    return;
+  }
+  if (!d.businesses?.length) {
+    cell.innerHTML = `<span style="color:var(--text-muted);">No business records are linked to this domain yet. `
+      + `Run "Sync Domains" if this data was scraped before the link column existed.</span>`;
+    return;
+  }
+
+  const shown = d.businesses.length;
+  const html = `
+    <div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">
+      <strong>${d.total.toLocaleString()}</strong> business${d.total === 1 ? '' : 'es'} on
+      <strong>${escapeHtml(d.domain)}</strong>${shown < d.total ? ` — showing first ${shown}` : ''}
+    </div>
+    <div class="table-wrap" style="max-height:420px;overflow-y:auto;">
+      <table>
+        <thead><tr>
+          <th>Business</th><th>Category</th><th>Rating</th><th>Reviews</th><th>Phone</th>
+          <th>Address</th><th>City</th><th>State</th><th>Status</th><th>Scraped Query</th><th>Maps</th>
+        </tr></thead>
+        <tbody>
+          ${d.businesses.map(b => `<tr>
+            <td style="font-weight:500;">${escapeHtml(b.name || '-')}</td>
+            <td>${b.category ? `<span class="tag tag-blue">${escapeHtml(b.category)}</span>` : '-'}</td>
+            <td>${b.rating ?? '-'}</td>
+            <td>${(b.review_count || 0).toLocaleString()}</td>
+            <td>${b.phone ? escapeHtml(b.phone) : '-'}</td>
+            <td style="font-size:11px;max-width:260px;">${b.address ? escapeHtml(b.address) : '-'}</td>
+            <td>${b.city ? escapeHtml(b.city) : '-'}</td>
+            <td>${b.state ? escapeHtml(b.state) : '-'}</td>
+            <td style="font-size:11px;">${b.current_status ? escapeHtml(b.current_status) : '-'}</td>
+            <td style="font-size:11px;color:var(--text-muted);">${b.query ? escapeHtml(b.query) : '-'}</td>
+            <td>${b.maps_url ? `<a href="${b.maps_url}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">open</a>` : '-'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:8px;">
+      <button class="btn btn-outline" style="padding:4px 10px;font-size:11px;"
+              onclick="exportOneDomainBusinesses('${domain}')">${icons.download} Export these businesses</button>
+    </div>`;
+  _domBiz[domain] = html;
+  cell.innerHTML = html;
+}
+
+function exportOneDomainBusinesses(domain) {
+  const a = document.createElement('a');
+  a.href = `/api/domains/businesses/export?domain=${encodeURIComponent(domain)}`;
+  a.download = `${domain}-businesses.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  toast(`Downloading businesses for ${domain}...`, 'success');
+}
+
+// Export the full business records behind whatever the registry filters select —
+// e.g. every business whose website sits on an expired domain.
+function exportDomainBusinessesCSV() {
+  const btn = document.getElementById('btn-dom-export-biz');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  const f = domFilterParams();
+  const params = new URLSearchParams({
+    status: f.status, search: f.search, tld: f.tld, expiring_within: f.expiring_within,
+  });
+  let filename = `businesses-${f.status || 'all'}`;
+  if (f.tld) filename += `-${f.tld}`;
+
+  const a = document.createElement('a');
+  a.href = `/api/domains/businesses/export?${params}`;
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+
+  btn.innerHTML = `${icons.database} Export Businesses`;
+  btn.disabled = false;
+  toast('Downloading full business records...', 'success');
 }

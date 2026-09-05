@@ -1,20 +1,25 @@
 """
 Domain liveness/expiry checking.
 
-Two tiers, deliberately ordered by cost:
+Three tiers, ordered by cost, each answering a different question:
 
-  Tier 1 — DNS (cheap, unlimited): an async NS lookup straight at public
-           resolvers. Every registered domain has NS records at its TLD; a
-           deleted (expired-and-dropped) domain returns NXDOMAIN. This runs on
-           every domain, every cycle, at ~1000/s per worker.
+  Tier 1 — DNS (cheap, unlimited): "is the name resolving right now?" An async
+           NS lookup straight at public resolvers. Every registered domain has
+           NS records at its TLD; a deleted domain returns NXDOMAIN. Runs on
+           every domain every cycle at ~1000/s per worker.
 
-  Tier 2 — RDAP (expensive, rate-limited): the authoritative answer, giving the
-           real expiry date and registrar. Only runs for domains that DNS
-           flagged as suspicious, plus a slow background enrichment pass — never
-           for the whole corpus at once.
+  Tier 2 — IDS (cheap in bulk): "is the name registered at all?" The
+           InstantDomainSearch bulk endpoint answers 500 domains per request,
+           so this runs for every domain too. It is what actually decides
+           available-vs-taken, which means expiry no longer rests on the
+           two-strike NXDOMAIN heuristic. See ids_client.
 
-Both tiers are pure async and share one rate limiter, so a single process can
-saturate DNS while trickling RDAP at a polite rate.
+  Tier 3 — RDAP (expensive, rate-limited): "when does it expire and who is the
+           registrar?" The only source for those, so it stays budgeted and is
+           spent where it adds something the first two tiers cannot.
+
+All tiers are async; DNS runs concurrently, IDS runs as a batch phase, and RDAP
+trickles behind its own rate limiter.
 """
 import asyncio
 import json
@@ -28,6 +33,7 @@ import httpx
 import pycares
 
 import domains as dom
+import ids_client
 
 # ─── Tunables (env-overridable so the k8s Deployment can be retuned without a
 # rebuild) ──────────────────────────────────────────────────────────────────
@@ -107,6 +113,7 @@ class DomainChecker:
         self._http: httpx.AsyncClient | None = None
         self._bootstrap: dict[str, str] = {}
         self._redis = redis_client
+        self._ids: ids_client.IDSClient | None = None
 
     def _next_resolver(self):
         r = self._resolvers[self._rr % len(self._resolvers)]
@@ -121,9 +128,15 @@ class DomainChecker:
             limits=httpx.Limits(max_connections=20),
         )
         await self._load_bootstrap()
+        if ids_client.ENABLED:
+            # Its own httpx client: the IDS endpoint needs browser-ish headers
+            # that would be wrong to send to registry RDAP servers.
+            self._ids = await ids_client.IDSClient().__aenter__()
         return self
 
     async def __aexit__(self, *exc):
+        if self._ids:
+            await self._ids.__aexit__(*exc)
         if self._http:
             await self._http.aclose()
 
@@ -268,81 +281,128 @@ class DomainChecker:
         return out
 
     # ─── Orchestration ──────────────────────────────────────────────────────
-    async def check_one(self, row: dict, rdap_budget: list[int] | None = None) -> dict:
-        """
-        Check a single claimed domain row and produce the write-back record.
-        `rdap_budget` is a shared one-element list acting as a mutable counter so
-        every coroutine in a batch draws from the same allowance.
-        """
-        domain = row["domain"]
-        now = _utcnow()
-
-        if not dom.is_valid_domain(domain):
-            return {
-                "id": row["id"], "status": dom.INVALID, "dns_status": None,
-                "last_error": "not a resolvable hostname", "fail_streak": 0,
-                "next_check_at": now + timedelta(days=365), "registrable": None,
-                "ns_records": None,
-            }
-
-        registrable = dom.registrable_domain(domain)
-
-        async with self._sem:
-            dns_status, ns = await self._dns_check(domain)
-
-        fail_streak = row.get("fail_streak", 0) or 0
-        rdap = None
-        last_error = None
-        rdap_deferred = False
-
-        # Decide whether this domain earns an RDAP call.
-        if RDAP_ENRICH and _needs_rdap(dns_status, row, now):
-            if rdap_budget is None or rdap_budget[0] > 0:
-                if rdap_budget is not None:
-                    rdap_budget[0] -= 1
-                rdap = await self._rdap_check(registrable)
-                if rdap.get("error"):
-                    last_error = rdap["error"]
-            else:
-                # Batch budget exhausted. Come back to this one soon rather than
-                # letting it wait out a full active-domain cycle unenriched.
-                rdap_deferred = True
-
-        status, fail_streak, last_error = _classify(
-            dns_status, rdap, row, fail_streak, last_error, now
-        )
-
-        return {
-            "id": row["id"],
-            "status": status,
-            "dns_status": dns_status,
-            "rdap_status": rdap.get("rdap_status") if rdap else None,
-            "registrar": rdap.get("registrar") if rdap else None,
-            "expiry_date": rdap.get("expiry_date") if rdap else None,
-            "created_date": rdap.get("created_date") if rdap else None,
-            "registrable": registrable or None,
-            "ns_records": json.dumps(ns) if ns else None,
-            "last_error": last_error,
-            "fail_streak": fail_streak,
-            "next_check_at": _next_check(status, rdap, row, fail_streak, now, rdap_deferred),
-        }
-
     async def check_many(self, rows: list[dict]) -> list[dict]:
+        """
+        Check a claimed batch as a pipeline, cheapest evidence first.
+
+          1. DNS   — every domain, concurrently.
+          2. IDS   — every domain, in bulk. 500 per request means the whole
+                     batch costs a handful of requests, so the authoritative
+                     "is it registered?" answer is affordable for everyone
+                     rather than rationed.
+          3. RDAP  — only where it adds something DNS and IDS cannot: the
+                     expiry date and registrar. Still budgeted per batch.
+
+        Running IDS as a batch phase (rather than per domain) is the whole point:
+        2000 domains cost 4 requests instead of 2000.
+        """
+        now = _utcnow()
+        valid, out = [], {}
+
+        for row in rows:
+            if not dom.is_valid_domain(row["domain"]):
+                # Same key set as every other result, so callers can index
+                # rather than .get() their way around a special case.
+                out[row["id"]] = {
+                    "id": row["id"], "status": dom.INVALID,
+                    "dns_status": None, "ids_status": None, "rdap_status": None,
+                    "registrar": None, "expiry_date": None, "created_date": None,
+                    "registrable": None, "ns_records": None,
+                    "last_error": "not a resolvable hostname", "fail_streak": 0,
+                    "next_check_at": now + timedelta(days=365),
+                }
+            else:
+                valid.append(row)
+
+        if not valid:
+            return [out[r["id"]] for r in rows]
+
+        # ── Phase 1: DNS ──
+        dns_results = await asyncio.gather(*(self._dns_with_sem(r["domain"]) for r in valid))
+
+        registrables = [dom.registrable_domain(r["domain"]) for r in valid]
+
+        # ── Phase 2: IDS bulk availability ──
+        ids_map = {}
+        if self._ids:
+            try:
+                ids_map = await self._ids.check([r for r in registrables if r])
+            except Exception as e:
+                print(f"[checker] IDS batch failed: {type(e).__name__}: {e}", flush=True)
+
+        # ── Phase 3: RDAP, budgeted ──
         budget = [RDAP_BUDGET_PER_BATCH]
-        return list(await asyncio.gather(*(self.check_one(r, budget) for r in rows)))
+        rdap_jobs = []
+        for row, (dns_status, _ns), registrable in zip(valid, dns_results, registrables):
+            ids_status = ids_map.get(registrable)
+            if RDAP_ENRICH and _needs_rdap(dns_status, row, now, ids_status):
+                if budget[0] > 0:
+                    budget[0] -= 1
+                    rdap_jobs.append((row["id"], registrable))
+                else:
+                    out.setdefault(row["id"], {})["_rdap_deferred"] = True
+
+        rdap_by_id = {}
+        if rdap_jobs:
+            answers = await asyncio.gather(*(self._rdap_check(reg) for _id, reg in rdap_jobs))
+            rdap_by_id = {job[0]: ans for job, ans in zip(rdap_jobs, answers)}
+
+        # ── Phase 4: fold the evidence ──
+        results = []
+        for row, (dns_status, ns), registrable in zip(valid, dns_results, registrables):
+            rdap = rdap_by_id.get(row["id"])
+            ids_status = ids_map.get(registrable)
+            rdap_deferred = bool(out.get(row["id"], {}).get("_rdap_deferred"))
+            last_error = rdap.get("error") if rdap else None
+            fail_streak = row.get("fail_streak", 0) or 0
+
+            status, fail_streak, last_error = _classify(
+                dns_status, rdap, row, fail_streak, last_error, now, ids_status
+            )
+            results.append({
+                "id": row["id"],
+                "status": status,
+                "dns_status": dns_status,
+                "ids_status": ids_status,
+                "rdap_status": rdap.get("rdap_status") if rdap else None,
+                "registrar": rdap.get("registrar") if rdap else None,
+                "expiry_date": rdap.get("expiry_date") if rdap else None,
+                "created_date": rdap.get("created_date") if rdap else None,
+                "registrable": registrable or None,
+                "ns_records": json.dumps(ns) if ns else None,
+                "last_error": last_error,
+                "fail_streak": fail_streak,
+                "next_check_at": _next_check(status, rdap, row, fail_streak, now,
+                                             rdap_deferred, ids_status),
+            })
+
+        by_id = {r["id"]: r for r in results}
+        return [by_id.get(r["id"]) or out[r["id"]] for r in rows]
+
+    async def _dns_with_sem(self, domain: str):
+        async with self._sem:
+            return await self._dns_check(domain)
+
+    async def check_one(self, row: dict) -> dict:
+        """Single-domain path, used by the UI's on-demand check."""
+        return (await self.check_many([row]))[0]
 
 
 # ─── Pure decision logic (kept module-level so it is unit-testable without a
 # resolver, an event loop or a database) ────────────────────────────────────
 
-def _needs_rdap(dns_status: str, row: dict, now: datetime) -> bool:
+def _needs_rdap(dns_status: str, row: dict, now: datetime, ids_status=None) -> bool:
     """
     RDAP is the scarce resource, so spend it only where it changes the answer:
-      1. DNS says the name is gone — confirm before calling it expired.
-      2. We have never enriched this domain — one-time backfill of expiry data.
-      3. The expiry we hold is near or past — re-verify before alerting.
+      1. IDS already says the name is unregistered — nothing left to learn, and
+         a registry has no expiry date for a name nobody holds. Skip it.
+      2. DNS says the name is gone but IDS could not confirm — fall back to RDAP.
+      3. We have never enriched this domain — one-time backfill of expiry data.
+      4. The expiry we hold is near or past — re-verify before alerting.
     """
-    if dns_status in ("nxdomain", "no_ns"):
+    if ids_status == ids_client.AVAILABLE:
+        return False
+    if dns_status in ("nxdomain", "no_ns") and ids_status != ids_client.REGISTERED:
         return True
     if not row.get("rdap_status"):
         return True
@@ -352,8 +412,17 @@ def _needs_rdap(dns_status: str, row: dict, now: datetime) -> bool:
     return False
 
 
-def _classify(dns_status, rdap, row, fail_streak, last_error, now):
-    """Fold DNS + RDAP evidence into one status. Returns (status, fail_streak, last_error)."""
+def _classify(dns_status, rdap, row, fail_streak, last_error, now, ids_status=None):
+    """
+    Fold DNS + IDS + RDAP evidence into one status.
+    Returns (status, fail_streak, last_error).
+    """
+    # IDS answers the availability question directly for every domain, so when
+    # it says the name is unregistered we can call it expired on the first pass
+    # — no two-strike NXDOMAIN wait, no RDAP call.
+    if ids_status == ids_client.AVAILABLE:
+        return dom.EXPIRED, 0, "not registered — available to register"
+
     # RDAP is authoritative when we have it.
     if rdap and rdap.get("rdap_status") == "available":
         return dom.EXPIRED, 0, "not registered (RDAP 404)"
@@ -375,6 +444,10 @@ def _classify(dns_status, rdap, row, fail_streak, last_error, now):
         return dom.ACTIVE, 0, last_error
 
     if dns_status in ("nxdomain", "no_ns"):
+        if ids_status == ids_client.REGISTERED:
+            # The registry says it is held; DNS just isn't publishing for it
+            # (parked, suspended, or between nameservers). Not expired.
+            return dom.ACTIVE, 0, "registered but not resolving"
         # One NXDOMAIN can be a resolver hiccup or a blocked query. Require two
         # consecutive failures before declaring a domain expired on DNS alone.
         streak = fail_streak + 1
@@ -387,7 +460,7 @@ def _classify(dns_status, rdap, row, fail_streak, last_error, now):
     return dom.ERROR, streak, last_error or f"dns {dns_status}"
 
 
-def _next_check(status, rdap, row, fail_streak, now, rdap_deferred=False) -> datetime:
+def _next_check(status, rdap, row, fail_streak, now, rdap_deferred=False, ids_status=None) -> datetime:
     """
     Adaptive scheduling. This is what makes millions of domains sustainable: a
     healthy domain is touched ~12 times a year, not continuously, so steady-state
@@ -413,7 +486,7 @@ def _next_check(status, rdap, row, fail_streak, now, rdap_deferred=False) -> dat
     if status == dom.PENDING:
         return now + timedelta(hours=12)
 
-    if rdap_deferred:
+    if rdap_deferred and ids_status != ids_client.AVAILABLE:
         # Wanted enrichment, lost the budget draw. Retry within the day.
         return now + timedelta(hours=18)
 
