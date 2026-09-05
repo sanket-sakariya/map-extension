@@ -39,6 +39,10 @@ BATCH = int(os.getenv("IDS_BATCH", "500"))
 RPS = float(os.getenv("IDS_RPS", "5"))
 TIMEOUT = float(os.getenv("IDS_TIMEOUT", "30"))
 ENABLED = os.getenv("IDS_ENABLED", "true").lower() == "true"
+# A failed chunk silently costs availability data for up to BATCH domains, and
+# they then wait out a full recheck cycle. Retrying is far cheaper than losing
+# them, so give each chunk a couple of attempts with a short backoff.
+RETRIES = int(os.getenv("IDS_RETRIES", "2"))
 
 HASH_SEED = int(os.getenv("IDS_HASH_SEED", "42"))
 
@@ -114,6 +118,11 @@ class IDSClient:
         self._own_http = http is None
         self._limiter = RateLimiter(RPS)
         self.last_error: str | None = None
+        # Counters so a degraded run is visible in the worker heartbeat rather
+        # than showing up days later as a hole in the data.
+        self.chunks_ok = 0
+        self.chunks_failed = 0
+        self.domains_unanswered = 0
 
     async def __aenter__(self):
         if self._http is None:
@@ -150,12 +159,34 @@ class IDSClient:
 
         results: dict[str, str] = {}
         for chunk in chunks:
-            await self._limiter.acquire()
-            answers = await self._post(chunk)
+            answers = []
+            for attempt in range(RETRIES + 1):
+                await self._limiter.acquire()
+                answers = await self._post(chunk)
+                if answers:
+                    break
+                if attempt < RETRIES:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+
+            if answers:
+                self.chunks_ok += 1
+            else:
+                # Loud, not silent: an unlogged empty chunk is how 45k domains
+                # ended up with no availability answer and nobody noticed.
+                self.chunks_failed += 1
+                self.domains_unanswered += len(chunk)
+                print(f"[ids] chunk of {len(chunk)} unanswered after "
+                      f"{RETRIES + 1} attempts: {self.last_error}", flush=True)
+
             for label, tld, registered in answers:
                 reg = wanted.get((label, tld))
                 if reg:
                     results[reg] = REGISTERED if registered else AVAILABLE
+
+        missing = len(wanted) - len(results)
+        if missing > 0:
+            print(f"[ids] {missing}/{len(wanted)} domains had no answer this batch",
+                  flush=True)
         return results
 
     async def _post(self, items: list[dict]) -> list[tuple[str, str, bool]]:
