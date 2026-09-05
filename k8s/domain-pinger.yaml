@@ -38,8 +38,12 @@ spec:
           value: "200"
         - name: PING_DNS_TIMEOUT
           value: "3.0"
+        # A batch costs max(DNS time, RDAP time). Measured in-cluster: 500
+        # domains = ~2s of DNS but ~8s of RDAP, so the DNS tier was idling most
+        # of the window. 2000 fills that window with DNS work while RDAP keeps
+        # its own polite 5rps — ~4x the sweep rate for the same RDAP load.
         - name: PING_BATCH_SIZE
-          value: "500"
+          value: "2000"
         - name: PING_IDLE_SLEEP
           value: "30"
         # ── Tier 2: RDAP ──
