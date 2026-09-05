@@ -490,6 +490,7 @@ def _next_check(status, rdap, row, fail_streak, now, rdap_deferred=False, ids_st
         # Wanted enrichment, lost the budget draw. Retry within the day.
         return now + timedelta(hours=18)
 
+
     # ACTIVE: if we know when it expires, wake up shortly before that.
     expiry = (rdap or {}).get("expiry_date") or row.get("expiry_date")
     if expiry:

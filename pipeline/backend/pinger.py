@@ -127,10 +127,14 @@ async def main():
             for res in results:
                 counts[res["status"]] = counts.get(res["status"], 0) + 1
             _log(f"{len(results)} in {elapsed:.1f}s ({len(results)/max(elapsed,0.01):.0f}/s) {counts}")
+            ids = getattr(chk, "_ids", None)
             _publish_heartbeat(
                 r, worker=worker_id, state="running", checked=total_checked,
                 last_batch=len(results), last_rate=round(len(results) / max(elapsed, 0.01), 1),
                 last_at=time.strftime("%Y-%m-%d %H:%M:%S"),
+                ids_chunks_ok=getattr(ids, "chunks_ok", 0),
+                ids_chunks_failed=getattr(ids, "chunks_failed", 0),
+                ids_unanswered=getattr(ids, "domains_unanswered", 0),
             )
 
     _log(f"stopped after {total_checked} domains")
