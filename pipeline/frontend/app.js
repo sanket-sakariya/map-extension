@@ -103,6 +103,7 @@ const pages = [
   { id: 'queries', label: 'Query Generator', icon: 'search' },
   { id: 'results', label: 'Results', icon: 'database' },
   { id: 'alldata', label: 'All Data', icon: 'filter' },
+  { id: 'domains', label: 'Domain Ping', icon: 'globe' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
@@ -127,6 +128,7 @@ function goTo(pageId) {
   if (pageId === 'scrapers') refreshWorkflows();
   if (pageId === 'results') loadResults();
   if (pageId === 'alldata') loadAllData();
+  if (pageId === 'domains') openDomainsPage();
 }
 
 function toggleSidebar() { document.getElementById('sidebar').classList.toggle('open'); }
@@ -166,6 +168,17 @@ function renderIcons() {
   document.getElementById('btn-reset-alldata').innerHTML = `${icons.refresh} Reset`;
   document.getElementById('btn-export-alldata').innerHTML = `${icons.download} Export Filtered`;
   document.getElementById('btn-export-domains').innerHTML = `${icons.globe} Export Domains`;
+
+  // Domain Ping
+  document.getElementById('dom-control-title').innerHTML = `${icons.activity} Ping Control`;
+  document.getElementById('dom-filter-title').innerHTML = `${icons.filter} Domain Filters`;
+  document.getElementById('btn-dom-sync').innerHTML = `${icons.refresh} Sync Domains`;
+  document.getElementById('btn-dom-recheck').innerHTML = `${icons.zap} Recheck All`;
+  document.getElementById('btn-dom-refresh').innerHTML = `${icons.refresh} Refresh`;
+  document.getElementById('btn-dom-search').innerHTML = `${icons.search} Search`;
+  document.getElementById('btn-dom-reset').innerHTML = `${icons.refresh} Reset`;
+  document.getElementById('btn-dom-export').innerHTML = `${icons.download} Export CSV`;
+  document.getElementById('btn-dom-checkone').innerHTML = `${icons.zap} Check Now`;
 
   // Biz/Loc titles
   document.getElementById('biz-title').innerHTML = `${icons.search} Business Categories`;
@@ -707,6 +720,7 @@ function filterDropdown(type) {
   if (type === 'category') items = _dbCategories;
   else if (type === 'city') items = _dbCities;
   else if (type === 'country') items = _allCountries.map(c => ({name: c, count: null}));
+  else if (type === 'tld') items = _domTlds;
   else items = [];
 
   if (!items.length) {
@@ -722,7 +736,8 @@ function filterDropdown(type) {
     return;
   }
 
-  const allLabel = type === 'category' ? 'All Categories' : type === 'city' ? 'All Cities' : 'Select country...';
+  const allLabel = type === 'category' ? 'All Categories' : type === 'city' ? 'All Cities'
+    : type === 'tld' ? 'All TLDs' : 'Select country...';
   dd.innerHTML = (type !== 'country' ? `<div class="dd-item" onclick="selectDropdown('${type}','')"><span style="color:var(--text-muted);">${allLabel}</span></div>` : '') +
     shown.map(i => `<div class="dd-item" onclick="selectDropdown('${type}','${i.name.replace(/'/g, "\\'")}')"><span>${i.name}</span>${i.count !== null ? `<span class="dd-count">${i.count.toLocaleString()}</span>` : ''}</div>`).join('');
 }
@@ -737,9 +752,10 @@ function selectDropdown(type, value) {
 function showStaticDropdown(type) {
   const dd = document.getElementById(`dropdown-${type}`);
   dd.style.display = 'block';
+  const inputId = document.getElementById(`ad-${type}`) ? `ad-${type}` : type;
   setTimeout(() => {
     document.addEventListener('click', function _close(e) {
-      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== `ad-${type}`) {
+      if (!e.target.closest(`#dropdown-${type}`) && e.target.id !== inputId) {
         dd.style.display = 'none';
         document.removeEventListener('click', _close);
       }
@@ -748,8 +764,13 @@ function showStaticDropdown(type) {
 }
 
 function selectStaticDropdown(type, value, label) {
-  document.getElementById(`ad-${type}`).value = label;
-  document.getElementById(`ad-${type}-value`).value = value;
+  // Most dropdowns are named ad-<type>, but a few (q-sort, r-per-page, modifier)
+  // use the bare type as their id. Fall back the same way showDropdown() does,
+  // instead of throwing on a null element.
+  const input = document.getElementById(`ad-${type}`) || document.getElementById(type);
+  const hidden = document.getElementById(`ad-${type}-value`) || document.getElementById(`${type}-value`);
+  if (input) input.value = label;
+  if (hidden) hidden.value = value;
   document.getElementById(`dropdown-${type}`).style.display = 'none';
 }
 
@@ -1009,4 +1030,360 @@ function toast(message, type = 'success') {
     el.classList.add('hiding');
     setTimeout(() => el.remove(), 300);
   }, 3000);
+}
+
+// ─── Domain Ping ────────────────────────────────────────────────────────────
+let domainsPage = 1;
+let _domTlds = [];
+let _domTldsLoaded = false;
+let _domStatsTimer = null;
+let _domAbort = null;
+
+// Status -> the tag colour and human label used everywhere on this page, so the
+// stat cards, the table and the single-check panel always agree.
+const DOM_STATUS = {
+  active:        { label: 'Active',        cls: 'tag-green' },
+  expired:       { label: 'Expired',       cls: 'tag-red' },
+  expiring_soon: { label: 'Expiring Soon', cls: 'tag-amber' },
+  pending:       { label: 'Pending',       cls: 'tag-blue' },
+  error:         { label: 'Error',         cls: 'tag-amber' },
+  invalid:       { label: 'Invalid',       cls: 'tag-grey' },
+};
+
+function domStatusTag(status) {
+  const s = DOM_STATUS[status] || { label: status || '-', cls: 'tag-grey' };
+  return `<span class="tag ${s.cls}">${s.label}</span>`;
+}
+
+function openDomainsPage() {
+  loadDomainStats();
+  loadDomTlds();
+  loadDomains();
+  // Poll while the page is open so a running sync/ping shows live progress.
+  clearInterval(_domStatsTimer);
+  _domStatsTimer = setInterval(() => {
+    if (currentPage === 'domains') loadDomainStats();
+    else clearInterval(_domStatsTimer);
+  }, 10000);
+}
+
+async function loadDomTlds() {
+  if (_domTldsLoaded) return;
+  const d = await api('/api/domains/tlds');
+  if (d.tlds?.length) { _domTlds = d.tlds; _domTldsLoaded = true; }
+}
+
+async function loadDomainStats() {
+  const d = await api('/api/domains/stats');
+  if (d.error) return;
+
+  // Stat cards double as status filters — clicking one filters the table.
+  const cards = [
+    { key: '',              num: d.total,                    label: 'Total Domains', color: 'var(--primary)' },
+    { key: 'expired',       num: d.by_status.expired,        label: 'Expired',       color: 'var(--danger)' },
+    { key: 'expiring_soon', num: d.by_status.expiring_soon,  label: 'Expiring Soon', color: 'var(--warning)' },
+    { key: 'active',        num: d.by_status.active,         label: 'Active',        color: 'var(--success)' },
+    { key: 'pending',       num: d.by_status.pending,        label: 'Not Yet Pinged',color: 'var(--text-secondary)' },
+    { key: 'error',         num: d.by_status.error,          label: 'Errors',        color: 'var(--warning)' },
+  ];
+  document.getElementById('dom-stats-grid').innerHTML = cards.map(c =>
+    `<div class="stat-card" style="cursor:pointer;" onclick="filterByDomStatus('${c.key}')">
+       <div class="stat-num" style="color:${c.color};">${(c.num || 0).toLocaleString()}</div>
+       <div class="stat-label">${c.label}</div>
+     </div>`
+  ).join('');
+
+  document.getElementById('dom-coverage-label').textContent =
+    `Pinged ${(d.checked || 0).toLocaleString()} of ${(d.total || 0).toLocaleString()} — ${(d.due_now || 0).toLocaleString()} queued now`;
+  document.getElementById('dom-coverage-pct').textContent = `${d.coverage_pct || 0}%`;
+  document.getElementById('dom-coverage-bar').style.width = `${d.coverage_pct || 0}%`;
+
+  // Pinger on/off button reflects live worker state.
+  const btn = document.getElementById('btn-dom-toggle');
+  if (d.pinger_enabled) {
+    btn.innerHTML = `${icons.stop} Pause Pinger`;
+    btn.className = 'btn btn-danger';
+  } else {
+    btn.innerHTML = `${icons.play} Resume Pinger`;
+    btn.className = 'btn btn-success';
+  }
+
+  const w = d.worker || {};
+  const info = document.getElementById('dom-worker-info');
+  if (w.state) {
+    const rate = w.last_rate ? ` — last batch ${w.last_batch} domains at ${w.last_rate}/s` : '';
+    info.innerHTML = `Worker <span class="tag ${w.state === 'running' ? 'tag-green' : 'tag-blue'}">${w.state}</span> `
+      + `${Number(w.checked || 0).toLocaleString()} checked this run${rate}`
+      + (w.last_at ? ` <span style="color:var(--text-muted);">(${w.last_at})</span>` : '');
+  } else {
+    info.innerHTML = '<span style="color:var(--text-muted);">No pinger worker has reported in the last 5 minutes.</span>';
+  }
+
+  // Sync progress
+  const sync = d.sync || {};
+  const el = document.getElementById('dom-sync-status');
+  const syncBtn = document.getElementById('btn-dom-sync');
+  if (sync.running) {
+    syncBtn.disabled = true;
+    syncBtn.innerHTML = `<span class="spinner"></span> Syncing...`;
+    el.innerHTML = sync.phase === 'upserting'
+      ? `Writing ${Number(sync.domains).toLocaleString()} domains to the registry...`
+      : `Scanned ${Number(sync.scanned).toLocaleString()} websites, ${Number(sync.domains).toLocaleString()} unique domains so far...`;
+  } else {
+    syncBtn.disabled = false;
+    syncBtn.innerHTML = `${icons.refresh} Sync Domains`;
+    if (sync.phase === 'done') {
+      el.textContent = `Last sync ${sync.finished_at}: ${Number(sync.scanned).toLocaleString()} websites scanned.`;
+    } else if (sync.phase === 'failed') {
+      el.innerHTML = `<span style="color:var(--danger);">Last sync failed: ${sync.error}</span>`;
+    } else {
+      el.textContent = '';
+    }
+  }
+}
+
+function filterByDomStatus(status) {
+  const label = status ? (DOM_STATUS[status]?.label || status) : 'All Statuses';
+  document.getElementById('ad-dom-status').value = label;
+  document.getElementById('ad-dom-status-value').value = status;
+  domainsPage = 1;
+  loadDomains();
+}
+
+function pickDomStatus(value, label) {
+  selectStaticDropdown('dom-status', value, label);
+  domainsPage = 1;
+  loadDomains();
+}
+
+function domFilterParams() {
+  return {
+    search: document.getElementById('dom-search').value.trim(),
+    status: document.getElementById('ad-dom-status-value').value,
+    tld: document.getElementById('ad-tld').value.trim(),
+    expiring_within: document.getElementById('ad-dom-window-value').value || 0,
+    sort_by: document.getElementById('ad-dom-sort-value').value,
+    sort_order: document.getElementById('ad-dom-order-value').value,
+  };
+}
+
+async function loadDomains() {
+  const perPage = parseInt(document.getElementById('ad-dom-per-page-value').value);
+  const params = new URLSearchParams({
+    ...domFilterParams(), limit: perPage, offset: (domainsPage - 1) * perPage,
+  });
+
+  // Cancel any in-flight query so rapid filter changes can't race.
+  if (_domAbort) _domAbort.abort();
+  _domAbort = new AbortController();
+
+  const tbody = document.getElementById('dom-tbody');
+  const info = document.getElementById('dom-info');
+  info.innerHTML = `<span class="spinner"></span> Loading domains...`;
+  tbody.innerHTML = Array.from({length: 6}).map(() =>
+    `<tr class="skeleton-row"><td colspan="9"><div class="skeleton-bar"></div></td></tr>`).join('');
+  document.getElementById('dom-pagination').innerHTML = '';
+
+  let d;
+  try {
+    d = await api(`/api/domains?${params}`, { signal: _domAbort.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    info.textContent = 'Failed to load domains.';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
+    return;
+  }
+
+  if (d.error) {
+    info.textContent = 'Failed to load domains.';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px;">Error loading domains</td></tr>';
+    return;
+  }
+
+  info.textContent = `${(d.total || 0).toLocaleString()} domains`;
+
+  if (!d.domains?.length) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:24px;">
+      No domains match these filters. If the registry is empty, click "Sync Domains" to import them from your scraped data.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = d.domains.map(r => {
+    const days = daysUntil(r.expiry_date);
+    return `<tr>
+      <td style="font-weight:500;"><a href="http://${r.domain}" target="_blank" rel="noopener noreferrer" style="color:var(--primary);">${r.domain}</a></td>
+      <td>${domStatusTag(r.status)}${r.last_error ? `<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${escapeHtml(r.last_error)}</div>` : ''}</td>
+      <td>${r.expiry_date ? r.expiry_date.slice(0, 10) : '<span style="color:var(--text-muted);">-</span>'}</td>
+      <td>${days === null ? '<span style="color:var(--text-muted);">-</span>'
+            : days < 0 ? `<span style="color:var(--danger);font-weight:600;">${Math.abs(days)}d ago</span>`
+            : days <= 30 ? `<span style="color:var(--warning);font-weight:600;">${days}d</span>`
+            : `${days}d`}</td>
+      <td style="font-size:12px;">${r.registrar ? escapeHtml(r.registrar) : '-'}</td>
+      <td style="font-size:11px;color:var(--text-secondary);">${r.dns_status || '-'}</td>
+      <td>${(r.business_count || 0).toLocaleString()}</td>
+      <td style="font-size:11px;color:var(--text-muted);">${r.last_checked_at ? new Date(r.last_checked_at).toLocaleString() : 'never'}</td>
+      <td><button class="btn btn-outline" style="padding:3px 8px;font-size:11px;" onclick="recheckDomain('${r.domain}')">Recheck</button></td>
+    </tr>`;
+  }).join('');
+
+  renderDomPag(Math.ceil((d.total || 0) / perPage));
+}
+
+function daysUntil(iso) {
+  if (!iso) return null;
+  return Math.floor((new Date(iso) - new Date()) / 86400000);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function renderDomPag(totalPages) {
+  const c = document.getElementById('dom-pagination');
+  if (totalPages <= 1) { c.innerHTML = ''; return; }
+  let h = '';
+  h += `<div class="page-btn" onclick="goDomPage(1)" ${domainsPage<=1?'style="opacity:0.3;pointer-events:none;"':''}>&#171;</div>`;
+  h += `<div class="page-btn" onclick="goDomPage(${domainsPage-1})" ${domainsPage<=1?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronLeft}</div>`;
+  const s = Math.max(1, domainsPage-2), e = Math.min(totalPages, domainsPage+2);
+  if (s > 1) h += `<div class="page-btn" onclick="goDomPage(1)">1</div><span style="padding:0 3px;color:var(--text-muted);">..</span>`;
+  for (let i=s;i<=e;i++) h += `<div class="page-btn ${i===domainsPage?'active':''}" onclick="goDomPage(${i})">${i}</div>`;
+  if (e < totalPages) h += `<span style="padding:0 3px;color:var(--text-muted);">..</span><div class="page-btn" onclick="goDomPage(${totalPages})">${totalPages}</div>`;
+  h += `<div class="page-btn" onclick="goDomPage(${domainsPage+1})" ${domainsPage>=totalPages?'style="opacity:0.3;pointer-events:none;"':''}>${icons.chevronRight}</div>`;
+  h += `<div class="page-btn" onclick="goDomPage(${totalPages})" ${domainsPage>=totalPages?'style="opacity:0.3;pointer-events:none;"':''}>&#187;</div>`;
+  c.innerHTML = h;
+}
+
+function goDomPage(n) { domainsPage = n; loadDomains(); }
+
+async function syncDomains() {
+  const btn = document.getElementById('btn-dom-sync');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Starting...`;
+  const d = await api('/api/domains/sync', { method: 'POST' });
+  if (d.status === 'started') {
+    toast('Domain sync started — this runs in the background', 'success');
+  } else {
+    toast(d.message || 'Sync already running', 'error');
+  }
+  loadDomainStats();
+}
+
+async function togglePinger() {
+  const btn = document.getElementById('btn-dom-toggle');
+  const turningOn = btn.textContent.includes('Resume');
+  btn.disabled = true;
+  const d = await api('/api/domains/pinger', {
+    method: 'POST', body: JSON.stringify({ enabled: turningOn }),
+  });
+  btn.disabled = false;
+  if (d.status === 'ok') {
+    toast(turningOn ? 'Pinger resumed' : 'Pinger paused', 'success');
+    loadDomainStats();
+  } else {
+    toast('Could not change pinger state', 'error');
+  }
+}
+
+async function recheckAllDomains() {
+  const status = document.getElementById('ad-dom-status-value').value;
+  const scope = status ? `all "${DOM_STATUS[status]?.label || status}" domains` : 'ALL domains';
+  if (!confirm(`Queue ${scope} for an immediate re-ping?`)) return;
+
+  const btn = document.getElementById('btn-dom-recheck');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Queueing...`;
+  const body = status ? { status } : { all: true };
+  const d = await api('/api/domains/recheck', { method: 'POST', body: JSON.stringify(body) });
+  btn.disabled = false;
+  btn.innerHTML = `${icons.zap} Recheck All`;
+  if (d.status === 'ok') {
+    toast(`${(d.queued || 0).toLocaleString()} domains queued for re-ping`, 'success');
+    loadDomainStats();
+  } else {
+    toast(d.message || 'Recheck failed', 'error');
+  }
+}
+
+async function recheckDomain(domain) {
+  const d = await api('/api/domains/recheck', {
+    method: 'POST', body: JSON.stringify({ domain }),
+  });
+  if (d.status === 'ok') toast(`${domain} queued for re-ping`, 'success');
+  else toast(d.message || 'Recheck failed', 'error');
+}
+
+async function checkOneDomain() {
+  const input = document.getElementById('dom-check-input');
+  const domain = input.value.trim();
+  if (!domain) { toast('Enter a domain to check', 'error'); return; }
+
+  const btn = document.getElementById('btn-dom-checkone');
+  const panel = document.getElementById('dom-check-result');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner"></span> Checking...`;
+  panel.style.display = 'block';
+  panel.innerHTML = `<span class="spinner"></span> Querying DNS and the registry for ${escapeHtml(domain)}...`;
+
+  const d = await api(`/api/domains/check?domain=${encodeURIComponent(domain)}`);
+
+  btn.disabled = false;
+  btn.innerHTML = `${icons.zap} Check Now`;
+
+  if (d.status !== 'ok') {
+    panel.innerHTML = `<span style="color:var(--danger);">${escapeHtml(d.message || 'Check failed')}</span>`;
+    return;
+  }
+  const r = d.result;
+  const days = daysUntil(r.expiry_date);
+  panel.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+      <strong style="font-size:14px;">${escapeHtml(r.domain)}</strong>
+      ${domStatusTag(r.status)}
+      ${days !== null ? `<span style="color:var(--text-secondary);">${days < 0 ? `expired ${Math.abs(days)} days ago` : `${days} days left`}</span>` : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:6px;color:var(--text-secondary);">
+      <div><strong>DNS:</strong> ${r.dns_status || '-'}</div>
+      <div><strong>Registry (RDAP):</strong> ${r.rdap_status || 'not queried'}</div>
+      <div><strong>Registrar:</strong> ${r.registrar ? escapeHtml(r.registrar) : '-'}</div>
+      <div><strong>Expires:</strong> ${r.expiry_date ? r.expiry_date.slice(0,10) : '-'}</div>
+      <div><strong>Registered:</strong> ${r.created_date ? r.created_date.slice(0,10) : '-'}</div>
+      <div><strong>Nameservers:</strong> ${r.ns_records?.length ? escapeHtml(r.ns_records.join(', ')) : '-'}</div>
+      ${r.last_error ? `<div style="grid-column:1/-1;"><strong>Note:</strong> ${escapeHtml(r.last_error)}</div>` : ''}
+    </div>`;
+}
+
+function exportDomainStatusCSV() {
+  const btn = document.getElementById('btn-dom-export');
+  btn.innerHTML = `<span class="spinner"></span> Exporting...`;
+  btn.disabled = true;
+
+  const f = domFilterParams();
+  const params = new URLSearchParams(f);
+  let filename = 'domain-status';
+  if (f.status) filename += `_${f.status}`;
+  if (f.tld) filename += `_${f.tld}`;
+
+  const a = document.createElement('a');
+  a.href = `/api/domains/export?${params}`;
+  a.download = `${filename}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+
+  btn.innerHTML = `${icons.download} Export CSV`;
+  btn.disabled = false;
+  toast('Downloading domain status CSV...', 'success');
+}
+
+function resetDomainFilters() {
+  document.getElementById('dom-search').value = '';
+  document.getElementById('ad-tld').value = '';
+  selectStaticDropdown('dom-status', '', 'All Statuses');
+  selectStaticDropdown('dom-window', '0', 'Any');
+  selectStaticDropdown('dom-sort', 'businesses', 'Businesses');
+  selectStaticDropdown('dom-order', 'desc', 'Descending');
+  document.getElementById('dom-check-result').style.display = 'none';
+  domainsPage = 1;
+  loadDomains();
 }

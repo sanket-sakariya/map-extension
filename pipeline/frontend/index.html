@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Maps Scraper Pipeline</title>
-<link rel="stylesheet" href="styles.css?v=4">
+<link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
 
@@ -351,6 +351,140 @@
       </div>
     </div>
 
+    <!-- Page: Domain Ping -->
+    <div class="page" id="page-domains">
+      <div class="page-header">
+        <h2>Domain Ping</h2>
+        <p>Pings every scraped domain and flags the ones that have expired</p>
+      </div>
+
+      <div class="stats-grid" id="dom-stats-grid"></div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="card-title" id="dom-control-title"></div>
+
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-secondary);margin-bottom:6px;">
+            <span id="dom-coverage-label">Checked 0 of 0</span>
+            <span id="dom-coverage-pct">0%</span>
+          </div>
+          <div style="height:8px;background:var(--border);border-radius:6px;overflow:hidden;">
+            <div id="dom-coverage-bar" style="height:100%;width:0%;background:var(--success);transition:width 0.4s ease;"></div>
+          </div>
+          <div id="dom-worker-info" style="font-size:12px;color:var(--text-muted);margin-top:8px;"></div>
+        </div>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button class="btn btn-primary" id="btn-dom-sync" onclick="syncDomains()"></button>
+          <button class="btn btn-outline" id="btn-dom-toggle" onclick="togglePinger()"></button>
+          <button class="btn btn-outline" id="btn-dom-recheck" onclick="recheckAllDomains()"></button>
+          <button class="btn btn-outline" id="btn-dom-refresh" onclick="loadDomainStats()"></button>
+          <span id="dom-sync-status" style="font-size:12px;color:var(--text-muted);"></span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <div class="card-title" id="dom-filter-title"></div>
+        <div class="filter-grid" style="display:grid;grid-template-columns:repeat(auto-fill, minmax(180px, 1fr));gap:12px;margin-bottom:16px;">
+          <div class="input-group" style="margin:0;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Search Domain</label>
+            <input type="text" class="input" id="dom-search" placeholder="e.g. example.com" style="width:100%;" onkeydown="if(event.key==='Enter'){domainsPage=1;loadDomains()}">
+          </div>
+          <div class="input-group" style="margin:0;position:relative;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Status</label>
+            <input type="text" class="input" id="ad-dom-status" value="All Statuses" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('dom-status')">
+            <input type="hidden" id="ad-dom-status-value" value="">
+            <div class="search-dropdown" id="dropdown-dom-status" style="display:none;">
+              <div class="dd-item" onclick="pickDomStatus('','All Statuses')"><span>All Statuses</span></div>
+              <div class="dd-item" onclick="pickDomStatus('expired','Expired')"><span>Expired</span></div>
+              <div class="dd-item" onclick="pickDomStatus('expiring_soon','Expiring Soon')"><span>Expiring Soon</span></div>
+              <div class="dd-item" onclick="pickDomStatus('active','Active')"><span>Active</span></div>
+              <div class="dd-item" onclick="pickDomStatus('pending','Pending')"><span>Pending</span></div>
+              <div class="dd-item" onclick="pickDomStatus('error','Error')"><span>Error</span></div>
+              <div class="dd-item" onclick="pickDomStatus('invalid','Invalid')"><span>Invalid</span></div>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0;position:relative;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">TLD</label>
+            <input type="text" class="input" id="ad-tld" placeholder="Search TLD..." style="width:100%;" autocomplete="off" onfocus="showDropdown('tld')" oninput="filterDropdown('tld')">
+            <input type="hidden" id="ad-tld-value">
+            <div class="search-dropdown" id="dropdown-tld" style="display:none;"></div>
+          </div>
+          <div class="input-group" style="margin:0;position:relative;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Expiring Within</label>
+            <input type="text" class="input" id="ad-dom-window" value="Any" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('dom-window')">
+            <input type="hidden" id="ad-dom-window-value" value="0">
+            <div class="search-dropdown" id="dropdown-dom-window" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('dom-window','0','Any')"><span>Any</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-window','7','7 days')"><span>7 days</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-window','30','30 days')"><span>30 days</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-window','90','90 days')"><span>90 days</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-window','180','180 days')"><span>180 days</span></div>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0;position:relative;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort By</label>
+            <input type="text" class="input" id="ad-dom-sort" value="Businesses" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('dom-sort')">
+            <input type="hidden" id="ad-dom-sort-value" value="businesses">
+            <div class="search-dropdown" id="dropdown-dom-sort" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('dom-sort','businesses','Businesses')"><span>Businesses</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-sort','expiry','Expiry Date')"><span>Expiry Date</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-sort','domain','Domain A-Z')"><span>Domain A-Z</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-sort','checked','Last Checked')"><span>Last Checked</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-sort','status','Status')"><span>Status</span></div>
+            </div>
+          </div>
+          <div class="input-group" style="margin:0;position:relative;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">Sort Order</label>
+            <input type="text" class="input" id="ad-dom-order" value="Descending" readonly style="width:100%;cursor:pointer;" onclick="showStaticDropdown('dom-order')">
+            <input type="hidden" id="ad-dom-order-value" value="desc">
+            <div class="search-dropdown" id="dropdown-dom-order" style="display:none;">
+              <div class="dd-item" onclick="selectStaticDropdown('dom-order','desc','Descending')"><span>Descending</span></div>
+              <div class="dd-item" onclick="selectStaticDropdown('dom-order','asc','Ascending')"><span>Ascending</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+          <div style="display:flex;gap:8px;">
+            <input type="text" class="input" id="dom-check-input" placeholder="Check a single domain now..." style="width:230px;" onkeydown="if(event.key==='Enter')checkOneDomain()">
+            <button class="btn btn-outline" onclick="checkOneDomain()" id="btn-dom-checkone"></button>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-outline" onclick="resetDomainFilters()" id="btn-dom-reset"></button>
+            <button class="btn btn-primary" onclick="domainsPage=1;loadDomains()" id="btn-dom-search"></button>
+            <button class="btn btn-success" onclick="exportDomainStatusCSV()" id="btn-dom-export"></button>
+          </div>
+        </div>
+
+        <div id="dom-check-result" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:13px;"></div>
+
+        <div id="dom-info" style="font-size:12px;color:var(--text-muted);margin-bottom:8px;"></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Domain</th><th>Status</th><th>Expiry</th><th>Days Left</th><th>Registrar</th><th>DNS</th><th>Businesses</th><th>Last Checked</th><th>Action</th></tr></thead>
+            <tbody id="dom-tbody"></tbody>
+          </table>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:12px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <label style="font-size:12px;color:var(--text-muted);">Per page:</label>
+            <div style="position:relative;display:inline-block;">
+              <input type="text" class="input" id="ad-dom-per-page" value="25" readonly style="width:60px;cursor:pointer;text-align:center;" onclick="showStaticDropdown('dom-per-page')">
+              <input type="hidden" id="ad-dom-per-page-value" value="25">
+              <div class="search-dropdown" id="dropdown-dom-per-page" style="display:none;min-width:60px;">
+                <div class="dd-item" onclick="selectStaticDropdown('dom-per-page','25','25');domainsPage=1;loadDomains()"><span>25</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('dom-per-page','50','50');domainsPage=1;loadDomains()"><span>50</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('dom-per-page','100','100');domainsPage=1;loadDomains()"><span>100</span></div>
+                <div class="dd-item" onclick="selectStaticDropdown('dom-per-page','200','200');domainsPage=1;loadDomains()"><span>200</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="pagination" id="dom-pagination"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Page: Settings -->
     <div class="page" id="page-settings">
       <div class="page-header">
@@ -380,7 +514,7 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script src="icons.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="icons.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
