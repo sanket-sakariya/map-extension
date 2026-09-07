@@ -101,17 +101,30 @@ def status() -> dict:
 
 def reclaim_only():
     """
-    VACUUM + REINDEX on their own, for when the dedupe committed but the
-    housekeeping could not finish.
+    Give the disk back after the delete.
+
+    VACUUM FULL, not VACUUM + REINDEX. Plain VACUUM only marks the dead space
+    reusable, so the heap stays at its pre-dedupe size — and every subsequent
+    index rebuild then rescans all of it. Measured here: REINDEX on the
+    un-compacted 9.5GB heap ran over 20 minutes and starved normal queries of
+    I/O badly enough that the API started timing out, while VACUUM FULL rewrote
+    the heap AND every index in about three minutes.
+
+    It takes an ACCESS EXCLUSIVE lock, so the table is unavailable while it
+    runs. That is a real (short) outage, and the reason this is a separate,
+    explicitly-triggered step rather than something the migration does silently.
     """
     conn = engine.raw_connection()
     try:
-        conn.set_isolation_level(0)
+        conn.set_isolation_level(0)  # VACUUM cannot run inside a transaction
         cur = conn.cursor()
         cur.execute("SET statement_timeout = 0")
+        # A parallel maintenance worker sizes its dynamic shared memory from
+        # maintenance_work_mem and puts it in /dev/shm. Staying serial keeps
+        # this working even where that mount is small.
         cur.execute("SET max_parallel_maintenance_workers = 0")
-        cur.execute("VACUUM (ANALYZE) businesses")
-        cur.execute("REINDEX TABLE businesses")
+        cur.execute("VACUUM (FULL, ANALYZE) businesses")
+        cur.execute("VACUUM (ANALYZE) business_queries")
     finally:
         conn.close()
 
@@ -261,24 +274,9 @@ def _run(r, reclaim: bool):
         if reclaim:
             try:
                 _set(r, phase="reclaiming")
-                conn.set_isolation_level(0)  # VACUUM cannot run in a transaction
-                # Serial, not parallel. A parallel maintenance worker sizes its
-                # dynamic shared memory from maintenance_work_mem and puts it in
-                # /dev/shm, which containers default to 64MB — so a parallel
-                # REINDEX dies with "could not resize shared memory segment".
-                cur.execute("SET max_parallel_maintenance_workers = 0")
-                cur.execute("VACUUM (ANALYZE) businesses")
-                _set(r, phase="reindexing")
-                cur.execute("REINDEX TABLE businesses")
-                conn.set_isolation_level(1)
-                conn.commit()
+                reclaim_only()
             except Exception as e:
                 reclaim_error = str(e)[:300]
-                try:
-                    conn.set_isolation_level(1)
-                    conn.rollback()
-                except Exception:
-                    pass
 
         _set(r, phase="done", deleted=deleted, unique_kept=unique_kept,
              backfilled=backfilled, duplicates_found=duplicates,
