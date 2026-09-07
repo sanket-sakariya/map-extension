@@ -22,6 +22,7 @@ import orchestrator
 import db_writer
 import domains as dom
 import checker
+import dedupe
 
 # Single implementation of URL -> bare domain, shared with the domain registry
 # and the pinger so the CSV export and the ping table can never disagree.
@@ -55,6 +56,7 @@ def save_pat(pat: str):
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     dom.ensure_schema()
+    dedupe.ensure_schema()
     db_writer.start()
     orchestrator.start(get_pat)
     yield
@@ -388,7 +390,15 @@ def pipeline_status(db: Session = Depends(get_db)):
 
 @app.get("/api/results/queries")
 def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort: str = "date", db: Session = Depends(get_db)):
-    """Get unique queries with result counts. Server-side paginated."""
+    """
+    Unique queries with result counts. Server-side paginated.
+
+    Reads business_queries, not businesses: since deduplication there is exactly
+    one business row per real business, so counting rows there would report how
+    many businesses a query found only if none of them were ever found by
+    another query. The association table is what preserves the true per-query
+    result count.
+    """
     # Total businesses (instant from pg_class)
     total_biz = db.execute(sql_text(
         "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
@@ -405,7 +415,7 @@ def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort:
         # For search: use query column with ILIKE (trigram GIN index helps)
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
-            FROM businesses WHERE query ILIKE :search
+            FROM business_queries WHERE query ILIKE :search
             GROUP BY query {order_clause}
             LIMIT :limit OFFSET :offset
         """), {"search": f"%{search}%", "limit": limit, "offset": offset}).fetchall()
@@ -416,14 +426,14 @@ def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort:
             try:
                 db.execute(sql_text("SET LOCAL statement_timeout = '4000ms'"))
                 cr = db.execute(sql_text(
-                    "SELECT COUNT(DISTINCT query) FROM businesses WHERE query ILIKE :search"
+                    "SELECT COUNT(DISTINCT query) FROM business_queries WHERE query ILIKE :search"
                 ), {"search": f"%{search}%"}).scalar() or 0
                 count_row = cr
             except Exception:
                 db.rollback()
                 # Estimate: assume proportional to total queries
                 nd = db.execute(sql_text(
-                    "SELECT n_distinct FROM pg_stats WHERE tablename='businesses' AND attname='query'"
+                    "SELECT n_distinct FROM pg_stats WHERE tablename='business_queries' AND attname='query'"
                 )).scalar() or 0
                 count_row = int(abs(nd)) if nd > 0 else 10000  # safe fallback
     else:
@@ -431,18 +441,18 @@ def get_result_queries(search: str = "", limit: int = 50, offset: int = 0, sort:
         try:
             db.execute(sql_text("SET LOCAL statement_timeout = '5000ms'"))
             count_row = db.execute(sql_text(
-                "SELECT COUNT(DISTINCT query) FROM businesses"
+                "SELECT COUNT(DISTINCT query) FROM business_queries"
             )).scalar() or 0
         except Exception:
             db.rollback()
             # Fallback to reltuples-based estimate
             count_row = db.execute(sql_text(
-                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'businesses'"
+                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'business_queries'"
             )).scalar() or 0
 
         rows = db.execute(sql_text(f"""
             SELECT query, COUNT(*) as count, MAX(scraped_at) as last_scraped
-            FROM businesses
+            FROM business_queries
             GROUP BY query {order_clause}
             LIMIT :limit OFFSET :offset
         """), {"limit": limit, "offset": offset}).fetchall()
@@ -488,7 +498,8 @@ def get_results(
         ).bindparams(search=search))
 
     if query:
-        q = q.filter(Business.query == query)
+        # The business row no longer carries every query that found it.
+        q = q.filter(sql_text("cid IN (SELECT cid FROM business_queries WHERE query = :bq_query)").bindparams(bq_query=query))
     if city:
         q = q.filter(Business.city == city)
     if state:
@@ -533,9 +544,12 @@ def get_results(
     # if it doesn't finish in time, we fall back to a fast approximate count instead of hanging.
     total = None
     if query and not search and not city and not category and min_rating <= 0 and min_reviews <= 0 and phone_filter == "all" and website_filter == "all" and address_filter == "all":
-        # Fast path: exact query match with idx_biz_query — always instant
+        # Fast path: count the associations, not businesses.query. After
+        # deduplication that column holds only the LAST query that found each
+        # business, so counting it would report a fraction of the real total.
+        # idx_bq_query keeps this instant.
         total = db.execute(sql_text(
-            "SELECT COUNT(*) FROM businesses WHERE query = :q"
+            "SELECT COUNT(*) FROM business_queries WHERE query = :q"
         ), {"q": query}).scalar() or 0
     else:
         try:
@@ -648,7 +662,7 @@ def export_results_csv(
             ).bindparams(search=search))
 
         if query:
-            stmt = stmt.filter(Business.query == query)
+            stmt = stmt.filter(sql_text("cid IN (SELECT cid FROM business_queries WHERE query = :bq_query)").bindparams(bq_query=query))
         if city:
             stmt = stmt.filter(Business.city == city)
         if state:
@@ -797,7 +811,7 @@ def export_domains_csv(
             ).bindparams(search=search))
 
         if query:
-            stmt = stmt.filter(Business.query == query)
+            stmt = stmt.filter(sql_text("cid IN (SELECT cid FROM business_queries WHERE query = :bq_query)").bindparams(bq_query=query))
         if city:
             stmt = stmt.filter(Business.city == city)
         if state:
@@ -1358,3 +1372,64 @@ def export_domain_businesses(
         tx.rollback()
         db.close()
         raise
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Business deduplication
+# ═══════════════════════════════════════════════════════════════════════════
+
+class DedupeRequest(BaseModel):
+    # VACUUM + REINDEX after the delete. Without it the table keeps its
+    # pre-dedupe size on disk and scans read the same number of pages.
+    reclaim: bool = True
+
+
+@app.get("/api/businesses/duplicates")
+def duplicate_report():
+    """
+    How much of the table is duplication, and what it would look like deduped.
+    Read-only — safe to call before committing to the migration.
+    """
+    db = SessionLocal()
+    try:
+        db.execute(sql_text("SET LOCAL statement_timeout = '120000ms'"))
+        total = db.execute(sql_text("SELECT COUNT(*) FROM businesses")).scalar() or 0
+        unique = db.execute(sql_text(
+            "SELECT COUNT(DISTINCT cid) FROM businesses WHERE cid IS NOT NULL AND cid <> ''"
+        )).scalar() or 0
+        no_cid = db.execute(sql_text(
+            "SELECT COUNT(*) FROM businesses WHERE cid IS NULL OR cid = ''"
+        )).scalar() or 0
+        associations = db.execute(sql_text("SELECT COUNT(*) FROM business_queries")).scalar() or 0
+        size = db.execute(sql_text(
+            "SELECT pg_size_pretty(pg_total_relation_size('businesses'))"
+        )).scalar()
+    finally:
+        db.close()
+
+    duplicates = max(total - unique - no_cid, 0)
+    return {
+        "total_rows": total,
+        "unique_businesses": unique,
+        "rows_without_cid": no_cid,
+        "duplicate_rows": duplicates,
+        "duplicate_pct": round(duplicates * 100.0 / total, 1) if total else 0.0,
+        "query_associations_recorded": associations,
+        "table_size": size,
+    }
+
+
+@app.post("/api/businesses/dedupe")
+def start_dedupe(req: DedupeRequest):
+    """
+    Collapse the table to one row per business, preserving every query
+    association in business_queries. Runs online in chunks.
+    """
+    if dedupe.start(reclaim=req.reclaim):
+        return {"status": "started"}
+    return {"status": "already_running", "message": "A dedupe is already in progress"}
+
+
+@app.get("/api/businesses/dedupe/status")
+def dedupe_status():
+    return dedupe.status()

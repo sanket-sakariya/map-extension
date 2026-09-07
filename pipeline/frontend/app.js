@@ -1451,7 +1451,7 @@ async function toggleDomainBusinesses(domain, i) {
       <table>
         <thead><tr>
           <th>Business</th><th>Category</th><th>Rating</th><th>Reviews</th><th>Phone</th>
-          <th>Address</th><th>City</th><th>State</th><th>Status</th><th>Scraped Query</th><th>Maps</th>
+          <th>Address</th><th>City</th><th>State</th><th>Status</th><th>Last Query</th><th>Maps</th>
         </tr></thead>
         <tbody>
           ${d.businesses.map(b => `<tr>
