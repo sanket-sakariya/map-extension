@@ -17,6 +17,13 @@ metadata:
   namespace: map-extractor
 spec:
   replicas: 1
+  # RollingUpdate cannot work here: the PVC is ReadWriteOnce and bound to one
+  # AZ, so the replacement pod can only schedule on the node the old pod is
+  # already occupying, and waits forever for memory that will not free until the
+  # old pod dies. Recreate stops the old pod first. Any postgres change means a
+  # short outage regardless, with a single volume.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres
