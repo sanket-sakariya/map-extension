@@ -1433,3 +1433,11 @@ def start_dedupe(req: DedupeRequest):
 @app.get("/api/businesses/dedupe/status")
 def dedupe_status():
     return dedupe.status()
+
+
+@app.post("/api/businesses/reclaim")
+def start_reclaim():
+    """VACUUM + REINDEX on their own, if the dedupe's housekeeping step failed."""
+    if dedupe.start_reclaim():
+        return {"status": "started"}
+    return {"status": "already_running"}

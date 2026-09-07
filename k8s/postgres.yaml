@@ -55,14 +55,23 @@ spec:
           mountPath: /var/lib/postgresql/data
         - name: init-sql
           mountPath: /docker-entrypoint-initdb.d
+        # Postgres allocates its dynamic shared memory here. The Kubernetes
+        # default of 64MB is far too small: a parallel index build sized by
+        # maintenance_work_mem asks for ~512MB and fails outright.
+        - name: dshm
+          mountPath: /dev/shm
         resources:
           requests:
             cpu: "1"
             memory: 7Gi
           limits:
             cpu: "2"
-            memory: 9Gi
+            memory: 10Gi
       volumes:
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi
       - name: pg-data
         persistentVolumeClaim:
           claimName: postgres-pvc

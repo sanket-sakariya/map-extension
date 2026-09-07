@@ -93,7 +93,49 @@ def status() -> dict:
         "started_at": s.get("started_at", ""),
         "finished_at": s.get("finished_at", ""),
         "error": s.get("error", ""),
+        # A failure here means the space was not reclaimed; the deduplication
+        # itself had already committed.
+        "reclaim_error": s.get("reclaim_error", ""),
     }
+
+
+def reclaim_only():
+    """
+    VACUUM + REINDEX on their own, for when the dedupe committed but the
+    housekeeping could not finish.
+    """
+    conn = engine.raw_connection()
+    try:
+        conn.set_isolation_level(0)
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = 0")
+        cur.execute("SET max_parallel_maintenance_workers = 0")
+        cur.execute("VACUUM (ANALYZE) businesses")
+        cur.execute("REINDEX TABLE businesses")
+    finally:
+        conn.close()
+
+
+def _reclaim_worker():
+    r = get_redis()
+    _set(r, phase="reclaiming", reclaim_error="",
+         started_at=time.strftime("%Y-%m-%d %H:%M:%S"), finished_at="")
+    try:
+        reclaim_only()
+        _set(r, phase="done", finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    except Exception as e:
+        _set(r, phase="done", reclaim_error=str(e)[:300],
+             finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+    finally:
+        r.delete(LOCK_KEY)
+
+
+def start_reclaim() -> bool:
+    r = get_redis()
+    if not r.set(LOCK_KEY, "1", nx=True, ex=86400):
+        return False
+    threading.Thread(target=_reclaim_worker, daemon=True).start()
+    return True
 
 
 def start(reclaim: bool = True) -> bool:
@@ -212,16 +254,34 @@ def _run(r, reclaim: bool):
         # A delete of this size leaves the heap and every index mostly dead
         # tuples. Without this the table still occupies its pre-dedupe size and
         # every scan reads the same number of pages.
+        # Reported separately from the migration itself: by this point the
+        # deduplication is committed and correct, so a housekeeping failure must
+        # not be reported as "the migration failed".
+        reclaim_error = ""
         if reclaim:
-            _set(r, phase="reclaiming")
-            conn.set_isolation_level(0)  # VACUUM cannot run inside a transaction
-            cur.execute("VACUUM (ANALYZE) businesses")
-            _set(r, phase="reindexing")
-            cur.execute("REINDEX TABLE businesses")
-            conn.set_isolation_level(1)
-            conn.commit()
+            try:
+                _set(r, phase="reclaiming")
+                conn.set_isolation_level(0)  # VACUUM cannot run in a transaction
+                # Serial, not parallel. A parallel maintenance worker sizes its
+                # dynamic shared memory from maintenance_work_mem and puts it in
+                # /dev/shm, which containers default to 64MB — so a parallel
+                # REINDEX dies with "could not resize shared memory segment".
+                cur.execute("SET max_parallel_maintenance_workers = 0")
+                cur.execute("VACUUM (ANALYZE) businesses")
+                _set(r, phase="reindexing")
+                cur.execute("REINDEX TABLE businesses")
+                conn.set_isolation_level(1)
+                conn.commit()
+            except Exception as e:
+                reclaim_error = str(e)[:300]
+                try:
+                    conn.set_isolation_level(1)
+                    conn.rollback()
+                except Exception:
+                    pass
 
         _set(r, phase="done", deleted=deleted, unique_kept=unique_kept,
-             backfilled=backfilled, duplicates_found=duplicates)
+             backfilled=backfilled, duplicates_found=duplicates,
+             reclaim_error=reclaim_error)
     finally:
         conn.close()
