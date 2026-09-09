@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Maps Scraper Pipeline</title>
-<link rel="stylesheet" href="styles.css?v=6">
+<link rel="stylesheet" href="styles.css?v=8">
 </head>
 <body>
 
@@ -105,6 +105,24 @@
             <input type="text" class="input" placeholder="Filter categories..." oninput="filterList('businesses', this.value)">
             <select class="input" id="businesses" multiple size="8"></select>
             <div style="font-size:12px;color:var(--text-muted);margin-top:4px;" id="biz-count"></div>
+
+            <!-- Custom categories: anything not in the GMB list, or a list
+                 pasted in from elsewhere. Added to whatever is selected above,
+                 so it works alongside the picker or entirely on its own. -->
+            <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);">
+              <label style="display:block;font-size:11px;font-weight:600;color:var(--text-secondary);margin-bottom:4px;">
+                Or add your own categories
+              </label>
+              <textarea class="input" id="custom-biz" rows="5" spellcheck="false"
+                        style="width:100%;resize:vertical;font-family:inherit;line-height:1.5;"
+                        placeholder="One per line, or comma separated:&#10;solar panel installer&#10;wedding photographer&#10;pet grooming, dog walker"
+                        oninput="onCustomBizInput()"></textarea>
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px;gap:8px;">
+                <span style="font-size:12px;color:var(--text-muted);" id="custom-biz-count"></span>
+                <button class="btn btn-outline" style="padding:4px 10px;font-size:11px;"
+                        onclick="clearCustomBiz()">Clear</button>
+              </div>
+            </div>
           </div>
           <div>
             <div class="card-title" id="loc-title"></div>
@@ -515,7 +533,7 @@
 <!-- Toast container -->
 <div id="toast-container"></div>
 
-<script src="icons.js?v=6"></script>
-<script src="app.js?v=7"></script>
+<script src="icons.js?v=8"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

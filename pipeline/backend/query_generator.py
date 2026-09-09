@@ -72,15 +72,42 @@ def get_cities(country: str) -> list[dict]:
     return []
 
 
+def _clean(values: list[str]) -> list[str]:
+    """
+    Trim, collapse inner whitespace, drop blanks, de-duplicate case-insensitively
+    while keeping the first spelling seen.
+
+    Matters because categories can now be typed or pasted by hand, so blanks,
+    stray commas and repeats reach here routinely. Every duplicate that slips
+    through costs a scraper a full page load for a result we already have.
+    """
+    seen: dict[str, str] = {}
+    for v in values or []:
+        cleaned = " ".join(str(v).split())
+        if cleaned and cleaned.lower() not in seen:
+            seen[cleaned.lower()] = cleaned
+    return list(seen.values())
+
+
 def generate_queries(
     mode: str,
     businesses: list[str],
     locations: list[str],
     modifier: str = "in"
 ) -> list[str]:
-    """Generate queries from business × location combinations."""
-    queries = []
+    """Generate queries from business x location combinations."""
+    businesses = _clean(businesses)
+    locations = _clean(locations)
+    # Normalize BEFORE falling back: a whitespace-only modifier is truthy, so
+    # `modifier or "in"` would keep it and emit "plumber  Austin" with no joiner.
+    modifier = " ".join(str(modifier or "").split()) or "in"
+
+    queries: list[str] = []
+    seen: set[str] = set()
     for biz in businesses:
         for loc in locations:
-            queries.append(f"{biz} {modifier} {loc}")
+            q = f"{biz} {modifier} {loc}"
+            if q.lower() not in seen:
+                seen.add(q.lower())
+                queries.append(q)
     return queries

@@ -416,9 +416,20 @@ def generate_queries(req: QueryGenerateRequest):
         modifier=req.modifier
     )
     r = get_redis()
-    for q in queries:
-        r.rpush("query_queue", q)
-    return {"generated": len(queries), "preview": queries[:20]}
+    if queries:
+        # One round trip instead of one per query: a full category x city
+        # cross-product is easily tens of thousands of items.
+        r.rpush("query_queue", *queries)
+    return {
+        "generated": len(queries),
+        # What the cross-product would have been before de-duplication, so the
+        # UI can say how many repeats it skipped.
+        "requested": len(req.businesses) * len(req.locations),
+        "categories": len(set(b.strip().lower() for b in req.businesses if b.strip())),
+        "locations": len(set(l.strip().lower() for l in req.locations if l.strip())),
+        "queue_depth": r.llen("query_queue"),
+        "preview": queries[:20],
+    }
 
 
 # ─── Pipeline Status ────────────────────────────────────────────────────────

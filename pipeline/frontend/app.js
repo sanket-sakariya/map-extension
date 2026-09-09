@@ -334,13 +334,54 @@ function filterList(id, query) {
   renderSelectOptions(id, filtered);
 }
 
+// Accept newlines AND commas: a textarea invites one-per-line, but pasted
+// lists are usually comma separated. Trim, drop blanks, and de-duplicate
+// case-insensitively while keeping the user's original casing.
+function parseCustomCategories(raw) {
+  const seen = new Map();
+  for (const part of String(raw || '').split(/[\n,]/)) {
+    const v = part.trim().replace(/\s+/g, ' ');
+    if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v);
+  }
+  return [...seen.values()];
+}
+
+function getCustomCategories() {
+  return parseCustomCategories(document.getElementById('custom-biz')?.value);
+}
+
+// The categories the user actually wants: whatever is picked from the GMB list
+// plus whatever they typed. Either side may be empty.
+function getSelectedBusinesses() {
+  const picked = Array.from(document.getElementById('businesses').selectedOptions).map(o => o.value);
+  const seen = new Map();
+  for (const v of [...picked, ...getCustomCategories()]) {
+    if (v && !seen.has(v.toLowerCase())) seen.set(v.toLowerCase(), v);
+  }
+  return [...seen.values()];
+}
+
+function onCustomBizInput() {
+  const n = getCustomCategories().length;
+  const el = document.getElementById('custom-biz-count');
+  el.textContent = n ? `${n} custom categor${n === 1 ? 'y' : 'ies'}` : '';
+  // Keep the step-3 preview honest while they are still typing.
+  if (currentStep === 3) renderPreview();
+}
+
+function clearCustomBiz() {
+  document.getElementById('custom-biz').value = '';
+  onCustomBizInput();
+}
+
 function selectAllLocs() {
   Array.from(document.getElementById('locations').options).forEach(o => o.selected = true);
   toast('All locations selected', 'success');
 }
 
 function renderPreview() {
-  const biz = Array.from(document.getElementById('businesses').selectedOptions).map(o => o.value);
+  const biz = getSelectedBusinesses();
+  const custom = getCustomCategories().length;
   const loc = Array.from(document.getElementById('locations').selectedOptions).map(o => o.value);
   const mod = document.getElementById('modifier').value;
   const total = biz.length * loc.length;
@@ -351,7 +392,13 @@ function renderPreview() {
     }
   }
   document.getElementById('gen-preview').innerHTML = `
-    <div style="font-size:14px;margin-bottom:8px;"><strong>${total}</strong> queries will be generated</div>
+    <div style="font-size:14px;margin-bottom:8px;">
+      <strong>${total.toLocaleString()}</strong> queries will be generated
+      <span style="font-size:12px;color:var(--text-muted);">
+        — ${biz.length} categor${biz.length === 1 ? 'y' : 'ies'}${custom ? ` (${custom} custom)` : ''}
+        x ${loc.length} location${loc.length === 1 ? '' : 's'}
+      </span>
+    </div>
     <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Preview:</div>
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;font-size:12px;max-height:120px;overflow-y:auto;">
       ${sample.map(s => `<div style="padding:2px 0;">${s}</div>`).join('')}
@@ -365,12 +412,12 @@ async function generateQueries() {
   btn.innerHTML = `<span class="spinner"></span> Generating...`;
   btn.disabled = true;
 
-  const businesses = Array.from(document.getElementById('businesses').selectedOptions).map(o => o.value);
+  const businesses = getSelectedBusinesses();
   const locations = Array.from(document.getElementById('locations').selectedOptions).map(o => o.value);
   const modifier = document.getElementById('modifier-value').value;
 
   if (!businesses.length || !locations.length) {
-    toast('Select at least one business and one location', 'error');
+    toast('Add at least one category (pick one or type your own) and one location', 'error');
     btn.innerHTML = `${icons.zap} Generate & Queue`;
     btn.disabled = false;
     return;
@@ -385,7 +432,10 @@ async function generateQueries() {
   btn.disabled = false;
 
   if (d.generated) {
-    toast(`${d.generated} queries added to queue`, 'success');
+    const dropped = (d.requested || d.generated) - d.generated;
+    toast(`${d.generated.toLocaleString()} queries added to queue`
+          + (dropped > 0 ? ` (${dropped.toLocaleString()} duplicate${dropped === 1 ? '' : 's'} skipped)` : ''),
+          'success');
     refreshStatus();
   } else {
     toast('Failed to generate queries', 'error');
