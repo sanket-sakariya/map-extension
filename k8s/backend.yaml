@@ -29,6 +29,14 @@ spec:
           value: aug-026/map
         - name: WORKFLOW_FILE
           value: map-vnc.yaml
+        # Public base URL the GitHub Actions scrapers register back on. Held
+        # here so it moves with the deployment: the settings-table copy outlived
+        # a cluster migration still pointing at the old cluster's load
+        # balancer, and every scraper launched afterwards died trying to
+        # register against it. The domain is a stable CNAME; the raw
+        # *.elb.amazonaws.com hostname changes when the LB is recreated.
+        - name: PIPELINE_PUBLIC_URL
+          value: https://map.articleinnovator.com
         resources:
           requests:
             cpu: 100m

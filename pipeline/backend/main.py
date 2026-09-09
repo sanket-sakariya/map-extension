@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import csv
 import io
+import httpx
 import redis as redis_lib
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text as sql_text, select
 
-from config import REDIS_URL
+from config import REDIS_URL, PIPELINE_PUBLIC_URL
 from database import get_db, engine, Base, SessionLocal
 from models import Business, ScrapeJob, ActiveScraper
 import github_client
@@ -125,14 +126,25 @@ def set_config(req: ConfigRequest):
 @app.get("/api/config")
 def get_config():
     pat = get_pat()
-    # Also get tunnel URL
-    db = SessionLocal()
-    try:
-        row = db.execute(sql_text("SELECT value FROM settings WHERE key = 'tunnel_url'")).fetchone()
-        tunnel_url = row[0] if row else ""
-    finally:
-        db.close()
-    return {"pat_set": bool(pat), "pat_preview": f"{pat[:10]}...{pat[-4:]}" if pat else "", "tunnel_url": tunnel_url}
+    pipeline_url = resolve_pipeline_url()
+
+    # Cached: the frontend polls this, and each miss costs a round trip out to
+    # the public URL and back.
+    r = get_redis()
+    cached = r.get("cache:pipeline_url_health")
+    if cached:
+        health = json.loads(cached)
+    else:
+        health = check_pipeline_url(pipeline_url)
+        r.set("cache:pipeline_url_health", json.dumps(health), ex=60)
+
+    return {
+        "pat_set": bool(pat),
+        "pat_preview": f"{pat[:10]}...{pat[-4:]}" if pat else "",
+        "tunnel_url": pipeline_url,
+        "pipeline_url_reachable": health["ok"],
+        "pipeline_url_error": health["error"],
+    }
 
 
 @app.post("/api/config/tunnel")
@@ -229,26 +241,66 @@ def get_workflows(db: Session = Depends(get_db)):
     }
 
 
+def resolve_pipeline_url() -> str:
+    """
+    The public base URL a scraper calls back on to register itself.
+
+    The settings row wins when set, so it stays overridable from the UI, but the
+    configured default is what makes this survive a cluster move.
+    """
+    db = SessionLocal()
+    try:
+        row = db.execute(sql_text(
+            "SELECT value FROM settings WHERE key = 'tunnel_url'"
+        )).fetchone()
+        stored = (row[0] or "").strip() if row else ""
+    finally:
+        db.close()
+    return stored or PIPELINE_PUBLIC_URL
+
+
+def check_pipeline_url(url: str) -> dict:
+    """Confirm the URL actually serves this API from outside the cluster."""
+    if not url:
+        return {"ok": False, "error": "No pipeline URL configured"}
+    try:
+        r = httpx.get(f"{url.rstrip('/')}/api/scrapers", timeout=10)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {str(e)[:160]}"}
+    if r.status_code != 200:
+        return {"ok": False, "error": f"HTTP {r.status_code} from {url}/api/scrapers"}
+    return {"ok": True, "error": ""}
+
+
 @app.post("/api/workflows/start")
 def start_workflows(req: WorkflowStartRequest):
     pat = get_pat()
     if not pat:
         return {"error": "PAT not configured"}
 
-    # Get tunnel URL to pass to workflows for self-registration
-    db = SessionLocal()
-    try:
-        row = db.execute(sql_text("SELECT value FROM settings WHERE key = 'tunnel_url'")).fetchone()
-        pipeline_url = row[0] if row else ""
-    finally:
-        db.close()
+    pipeline_url = resolve_pipeline_url()
+
+    # Preflight. A scraper that cannot reach this API registers nowhere and is
+    # dead weight, and the runner's registration step aborts the whole job. This
+    # exact situation launched a batch of scrapers against a load balancer left
+    # behind by the previous cluster — fail loudly here instead.
+    health = check_pipeline_url(pipeline_url)
+    if not health["ok"]:
+        return {
+            "error": f"Pipeline URL is not reachable, refusing to start scrapers: {health['error']}",
+            "pipeline_url": pipeline_url,
+            "hint": "Set a publicly reachable URL under Settings, or fix PIPELINE_PUBLIC_URL.",
+            "triggered": 0,
+        }
 
     results = []
     for _ in range(req.count):
         res = github_client.trigger_workflow(pat, pipeline_url)
         results.append(res)
         time.sleep(1)
-    return {"triggered": req.count, "pipeline_url": pipeline_url, "results": results}
+    triggered = sum(1 for r in results if r.get("triggered"))
+    return {"triggered": triggered, "requested": req.count,
+            "pipeline_url": pipeline_url, "results": results}
 
 
 @app.get("/api/workflows/queued")
